@@ -1,0 +1,379 @@
+// HMP OS — schema conceitual v0.1 (protótipo)
+// Reflete docs/hmp-os/conceptual-architecture-v0.1.md.
+// Simplificações deliberadas para o protótipo (ver README > Notas de escopo):
+// - Role é um enum em Person, não uma entidade própria.
+// - Decision liga direto a Feature/Product (FK simples), não uma tabela de vínculo N-N genérica.
+// - AcceptanceCriteria guarda o status atual; ValidationRecord guarda o resultado por tentativa.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Enums ----------
+
+enum RoleName {
+  PRODUCT
+  ARCHITECTURE
+  ENGINEERING
+}
+
+enum ProductStatus {
+  DISCOVERY
+  DEVELOPMENT
+  PAUSED
+  DISCONTINUED
+}
+
+enum ReleaseStatus {
+  PLANNED
+  IN_PROGRESS
+  SHIPPED
+}
+
+enum FeatureStatus {
+  BACKLOG
+  DISCOVERY
+  SPECIFICATION
+  ARCHITECTURE
+  DEVELOPMENT
+  REVIEW
+  VALIDATION
+  DONE
+}
+
+enum Priority {
+  P0
+  P1
+  P2
+  P3
+}
+
+enum RequirementStatus {
+  PROPOSED
+  APPROVED
+  IMPLEMENTED
+  TESTED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  REVIEW
+  DONE
+}
+
+enum ArtifactType {
+  DOCUMENT
+  C4
+  CLASS_DIAGRAM
+  SEQUENCE_DIAGRAM
+  RESEARCH
+  REFERENCE
+  SPECIFICATION
+}
+
+enum CriteriaStatus {
+  PENDING
+  PASSED
+  FAILED
+}
+
+enum ValidationResult {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ---------- Núcleo organizacional ----------
+
+model Company {
+  id        String    @id @default(cuid())
+  name      String
+  products  Product[]
+  createdAt DateTime  @default(now())
+}
+
+model Person {
+  id     String   @id @default(cuid())
+  name   String
+  email  String   @unique
+  role   RoleName
+  active Boolean  @default(true)
+
+  ownedFeatures       Feature[] @relation("FeatureOwner")
+  architectedFeatures Feature[] @relation("FeatureArchitect")
+  ledFeatures         Feature[] @relation("FeatureTechLead")
+
+  assignedTasks Task[] @relation("TaskAssignee")
+  createdTasks  Task[] @relation("TaskCreatedBy")
+  reviewedTasks Task[] @relation("TaskReviewer")
+
+  authoredDecisions      Decision[]             @relation("DecisionAuthor")
+  decisionParticipations DecisionParticipant[]
+  meetingParticipations  MeetingParticipant[]
+  authoredArtifacts      Artifact[]             @relation("ArtifactAuthor")
+  validationsPerformed   ValidationRecord[]     @relation("ValidationValidatedBy")
+
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id          String        @id @default(cuid())
+  companyId   String
+  company     Company       @relation(fields: [companyId], references: [id])
+  name        String
+  description String
+  status      ProductStatus @default(DISCOVERY)
+
+  features  Feature[]
+  releases  Release[]
+  decisions Decision[] @relation("DecisionProduct")
+
+  createdAt DateTime @default(now())
+}
+
+model Release {
+  id         String        @id @default(cuid())
+  productId  String
+  product    Product       @relation(fields: [productId], references: [id])
+  name       String
+  targetDate DateTime?
+  status     ReleaseStatus @default(PLANNED)
+  features   Feature[]
+
+  createdAt DateTime @default(now())
+}
+
+// ---------- Feature: entidade central ----------
+
+model Feature {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  releaseId String?
+  release   Release? @relation(fields: [releaseId], references: [id])
+
+  title             String
+  context           String?
+  problem           String?
+  userNeed          String?
+  objective         String?
+  functionalFlow    String?
+  architectureNotes String?
+  priority          Priority?
+  status            FeatureStatus @default(BACKLOG)
+
+  ownerId     String?
+  owner       Person? @relation("FeatureOwner", fields: [ownerId], references: [id])
+  architectId String?
+  architect   Person? @relation("FeatureArchitect", fields: [architectId], references: [id])
+  techLeadId  String?
+  techLead    Person? @relation("FeatureTechLead", fields: [techLeadId], references: [id])
+
+  requirements       Requirement[]
+  tasks              Task[]
+  artifacts          Artifact[]
+  acceptanceCriteria AcceptanceCriteria[]
+  validationRecords  ValidationRecord[]
+  decisions          Decision[]            @relation("DecisionFeature")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Requirement {
+  id          String            @id @default(cuid())
+  featureId   String
+  feature     Feature           @relation(fields: [featureId], references: [id])
+  description String
+  priority    Priority          @default(P2)
+  status      RequirementStatus @default(PROPOSED)
+  source      String?
+
+  createdAt DateTime @default(now())
+}
+
+// ---------- Task: unidade de execução ----------
+
+model Task {
+  id           String   @id @default(cuid())
+  featureId    String?
+  feature      Feature? @relation(fields: [featureId], references: [id])
+  parentTaskId String?
+  parentTask   Task?    @relation("TaskSubtasks", fields: [parentTaskId], references: [id])
+  subtasks     Task[]   @relation("TaskSubtasks")
+
+  title         String
+  description   String?
+  status        TaskStatus @default(TODO)
+  priority      Priority   @default(P2)
+  dueDate       DateTime?
+  blockedReason String?
+
+  assigneeId  String?
+  assignee    Person? @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  createdById String?
+  createdBy   Person? @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  reviewerId  String?
+  reviewer    Person? @relation("TaskReviewer", fields: [reviewerId], references: [id])
+
+  decisionId String?
+  decision   Decision? @relation("DecisionGeneratedTasks", fields: [decisionId], references: [id])
+  meetingId  String?
+  meeting    Meeting?  @relation("MeetingFollowUps", fields: [meetingId], references: [id])
+
+  dependsOn TaskDependency[] @relation("DependentTask")
+  blocks    TaskDependency[] @relation("DependencyTask")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TaskDependency {
+  id            String @id @default(cuid())
+  taskId        String
+  task          Task   @relation("DependentTask", fields: [taskId], references: [id])
+  dependsOnId   String
+  dependsOnTask Task   @relation("DependencyTask", fields: [dependsOnId], references: [id])
+
+  @@unique([taskId, dependsOnId])
+}
+
+// ---------- Conhecimento & decisão ----------
+
+model Meeting {
+  id     String   @id @default(cuid())
+  title  String
+  date   DateTime
+  agenda String?
+  notes  String?
+
+  participants  MeetingParticipant[]
+  decisions     Decision[]           @relation("DecisionMeeting")
+  followUpTasks Task[]               @relation("MeetingFollowUps")
+  artifacts     Artifact[]           @relation("ArtifactMeeting")
+
+  createdAt DateTime @default(now())
+}
+
+model MeetingParticipant {
+  id        String  @id @default(cuid())
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id])
+  personId  String
+  person    Person  @relation(fields: [personId], references: [id])
+
+  @@unique([meetingId, personId])
+}
+
+model Decision {
+  id           String   @id @default(cuid())
+  title        String
+  context      String?
+  decision     String
+  reason       String?
+  alternatives String?
+
+  authorId  String?
+  author    Person?  @relation("DecisionAuthor", fields: [authorId], references: [id])
+  decidedAt DateTime @default(now())
+
+  meetingId String?
+  meeting   Meeting? @relation("DecisionMeeting", fields: [meetingId], references: [id])
+
+  featureId String?
+  feature   Feature? @relation("DecisionFeature", fields: [featureId], references: [id])
+  productId String?
+  product   Product? @relation("DecisionProduct", fields: [productId], references: [id])
+
+  participants   DecisionParticipant[]
+  generatedTasks Task[]                @relation("DecisionGeneratedTasks")
+  artifacts      Artifact[]            @relation("ArtifactDecision")
+
+  createdAt DateTime @default(now())
+}
+
+model DecisionParticipant {
+  id         String   @id @default(cuid())
+  decisionId String
+  decision   Decision @relation(fields: [decisionId], references: [id])
+  personId   String
+  person     Person   @relation(fields: [personId], references: [id])
+
+  @@unique([decisionId, personId])
+}
+
+// ---------- Artefatos & documentação ----------
+
+model Artifact {
+  id          String       @id @default(cuid())
+  title       String
+  type        ArtifactType
+  description String?
+  url         String?
+  version     String?      @default("v1")
+
+  featureId String?
+  feature   Feature? @relation(fields: [featureId], references: [id])
+
+  meetingId String?
+  meeting   Meeting? @relation("ArtifactMeeting", fields: [meetingId], references: [id])
+
+  decisionId String?
+  decision   Decision? @relation("ArtifactDecision", fields: [decisionId], references: [id])
+
+  authorId String?
+  author   Person? @relation("ArtifactAuthor", fields: [authorId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+// ---------- Validação ----------
+
+model AcceptanceCriteria {
+  id          String         @id @default(cuid())
+  featureId   String
+  feature     Feature        @relation(fields: [featureId], references: [id])
+  description String
+  status      CriteriaStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+}
+
+model ValidationRecord {
+  id            String           @id @default(cuid())
+  featureId     String
+  feature       Feature          @relation(fields: [featureId], references: [id])
+  attemptNumber Int
+  overallResult ValidationResult @default(PENDING)
+  notes         String?
+  issuesFound   String?
+
+  validatedById String?
+  validatedBy   Person?   @relation("ValidationValidatedBy", fields: [validatedById], references: [id])
+  validatedAt   DateTime?
+
+  createdAt DateTime @default(now())
+}
+
+// ---------- Rastreabilidade ----------
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  entityType  String
+  entityId    String
+  eventType   String
+  actorId     String?
+  actorName   String?
+  description String
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
