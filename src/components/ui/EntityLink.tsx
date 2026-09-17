@@ -30,7 +30,7 @@ export function EntityLink({
     <Link
       href={href}
       className={clsx(
-        "inline-flex min-w-0 items-center gap-1.5 text-sm hover:underline",
+        "flex min-w-0 items-center gap-1.5 text-sm hover:underline",
         muted ? "text-ink-muted" : "font-medium text-ink",
         className,
       )}

@@ -106,9 +106,11 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
                   </p>
                   <div className="space-y-1">
                     {task.blocks.map((d) => (
-                      <EntityLink key={d.id} type="task" href={`/tasks/${d.task.id}`}>
-                        {d.task.title}
-                      </EntityLink>
+                      <div key={d.id}>
+                        <EntityLink type="task" href={`/tasks/${d.task.id}`}>
+                          {d.task.title}
+                        </EntityLink>
+                      </div>
                     ))}
                   </div>
                 </div>
