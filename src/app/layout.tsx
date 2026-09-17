@@ -7,6 +7,11 @@ export const metadata: Metadata = {
   description: "Sistema operacional interno da HMP para gestão e execução de produtos.",
 };
 
+// Todo o app depende de dados ao vivo (banco + cookie de ator) — nunca há
+// valor em pré-renderizar no build, e evita que o build tente uma conexão
+// com o banco antes do runtime.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR">

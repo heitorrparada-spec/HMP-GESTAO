@@ -13,26 +13,41 @@ Protótipo navegável e funcional, para validar o modelo operacional na prática
 
 ### Stack
 
-- **Next.js (App Router) + TypeScript** — Server Components para leitura, Server Actions para toda mutação (sem API separada).
-- **Prisma + SQLite** — banco de desenvolvimento simples, em arquivo, fácil de migrar para Postgres depois. Usa driver adapter (`@prisma/adapter-better-sqlite3`), exigido a partir do Prisma 7.
+- **Next.js (App Router) + TypeScript** — Server Components para leitura, Server Actions para toda mutação (sem API separada). Todas as rotas são `force-dynamic`: o app depende 100% de dados ao vivo (banco + cookie de ator), não há nada a pré-renderizar no build.
+- **Prisma + Postgres** — usa driver adapter (`@prisma/adapter-pg`), exigido a partir do Prisma 7. Funciona com qualquer Postgres (Neon, Supabase, Vercel Postgres); o protótipo foi validado com **Neon**.
 - **Tailwind CSS** — componentes próprios (sem UI kit pesada), visual inspirado em Linear/Height/Notion.
 - Sem autenticação real — um seletor de "atuando como" (cookie) simula o usuário atual para fins de demonstração.
 
-### Rodando localmente
+### Banco de dados (Neon/Postgres)
+
+O app precisa de uma connection string Postgres em `DATABASE_URL`. Para Neon, use a variante **pooled** (hostname com `-pooler`), que é a recomendada tanto para uso local quanto para funções serverless na Vercel.
 
 ```bash
 npm install
-cp .env.example .env          # já vem com o valor certo para SQLite local
-npm run db:migrate            # cria prisma/dev.db e aplica as migrations
+cp .env.example .env
+# edite .env e cole sua DATABASE_URL do Neon (ou outro Postgres)
+
+npx prisma migrate deploy     # aplica prisma/migrations/ — cria todas as tabelas
 npm run db:seed               # popula com dados realistas da HMP (ver abaixo)
 npm run dev                   # http://localhost:3000
 ```
 
-Para recomeçar do zero (reseta o banco e roda o seed de novo):
+> A migration inicial (`prisma/migrations/20260917000000_init/`) já vem pronta no repositório — foi gerada offline (`prisma migrate diff --from-empty`), sem precisar de uma conexão viva com o banco no momento em que foi criada. `migrate deploy` só aplica esse SQL contra o banco real apontado por `DATABASE_URL`.
+
+Para recomeçar do zero (⚠️ **apaga todos os dados** do banco apontado por `DATABASE_URL` e roda o seed de novo):
 
 ```bash
 npm run db:reset
 ```
+
+### Deploy na Vercel
+
+1. Importe o repositório em [vercel.com/new](https://vercel.com/new) (Next.js é detectado automaticamente).
+2. Em **Environment Variables**, adicione `DATABASE_URL` com a mesma connection string do Neon (pooled).
+3. Antes do primeiro deploy ficar realmente utilizável, rode `npx prisma migrate deploy` e `npm run db:seed` uma vez contra esse banco (do seu próprio ambiente local — o build da Vercel não roda migrations automaticamente).
+4. Deploy.
+
+> **Nota**: a migração de SQLite para Postgres foi feita e o `npm run build` foi validado localmente, mas `migrate deploy`/`db:seed`/o app rodando contra Postgres **não foram testados de ponta a ponta** neste ambiente — o sandbox de desenvolvimento usado bloqueia acesso de rede a `neon.tech` (mesma política que bloqueia `vercel.com`). Rode os passos acima a partir de uma máquina com rede normal antes de considerar o deploy validado.
 
 ### O que vem no seed
 
