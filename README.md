@@ -20,7 +20,12 @@ Protótipo navegável e funcional, para validar o modelo operacional na prática
 
 ### Banco de dados (Neon/Postgres)
 
-O app precisa de uma connection string Postgres em `DATABASE_URL`. Para Neon, use a variante **pooled** (hostname com `-pooler`), recomendada tanto para uso local quanto para funções serverless na Vercel.
+O app usa duas connection strings:
+
+- `DATABASE_URL` — a variante **pooled** do Neon (hostname com `-pooler`), usada pelo app em runtime. Recomendada tanto local quanto em serverless.
+- `DIRECT_URL` — a variante **direta** (mesmo hostname, sem `-pooler`), usada só por `prisma migrate deploy`/`migrate dev`. O advisory lock que o Migrate usa para evitar migrations concorrentes não é confiável através do pooler (PgBouncer em modo transaction) — sem isso, `migrate deploy` trava e falha com `Error: P1002` (timeout tentando `pg_advisory_lock`). Localmente, se não definir `DIRECT_URL`, cai automaticamente para `DATABASE_URL`.
+
+No painel do Neon, a caixa de "Connection string" tem as duas variantes (normalmente um toggle "Pooled connection"/"Connection pooling") — copie cada uma para a variável certa.
 
 `npm run build` (e o `build` da Vercel, ver abaixo) já roda `prisma migrate deploy` automaticamente antes do `next build` — as tabelas são criadas sozinhas a partir da migration que já está em `prisma/migrations/`, sem precisar rodar nada à parte.
 
@@ -29,7 +34,7 @@ Localmente:
 ```bash
 npm install
 cp .env.example .env
-# edite .env e cole sua DATABASE_URL do Neon (ou outro Postgres)
+# edite .env: DATABASE_URL (pooled) e DIRECT_URL (direta) do Neon
 
 npm run db:seed               # popula com dados realistas da HMP (ver abaixo)
 npm run dev                   # http://localhost:3000
@@ -43,9 +48,10 @@ npm run db:reset
 
 ### Deploy na Vercel (sem precisar rodar nada localmente)
 
-1. Importe o repositório em [vercel.com/new](https://vercel.com/new) (Next.js é detectado automaticamente).
-2. Em **Environment Variables**, adicione:
-   - `DATABASE_URL` — a connection string do Neon (pooled).
+1. Importe o repositório em [vercel.com/new](https://vercel.com/new) (Next.js é detectado automaticamente) e garanta que o **Framework Preset** está como **Next.js** (se o projeto já existia antes do app ter código, a Vercel pode ter detectado "Other" — troque manualmente em Settings → Build and Deployment se for o caso).
+2. Em **Environment Variables**, adicione (marcando Production **e** Preview nas duas primeiras):
+   - `DATABASE_URL` — a connection string **pooled** do Neon.
+   - `DIRECT_URL` — a connection string **direta** do Neon (mesmo host, sem `-pooler`) — necessária para o `migrate deploy` rodar no build (ver seção acima).
    - `SEED_TOKEN` — qualquer valor secreto à sua escolha (é só a "senha" de um endpoint de bootstrap, ver abaixo).
 3. Deploy. O próprio build já roda a migration e cria as tabelas — não precisa terminal, nem `npx`, nem nada local.
 4. Depois do deploy, popule os dados de demonstração visitando uma vez, no navegador:
@@ -53,7 +59,7 @@ npm run db:reset
    Isso roda o mesmo seed de `npm run db:seed`, direto no banco de produção. Pode chamar de novo a qualquer momento para resetar a demo ao estado inicial.
 5. **Depois de usar**, remova a variável `SEED_TOKEN` da Vercel (ou troque o valor) — essa rota apaga e recria todos os dados sempre que é chamada, então não é algo para deixar disponível indefinidamente com um token previsível.
 
-> **Nota**: esta sequência não foi testada de ponta a ponta neste ambiente de desenvolvimento — o sandbox usado aqui bloqueia acesso de rede a `neon.tech` e `vercel.com` (política da organização), então não consegui rodar `migrate deploy`/seed/o app contra o Postgres real a partir daqui. `npm run build` foi validado (sem a etapa de `migrate deploy`, que exige um banco alcançável). O código está pronto; o primeiro deploy real é a validação final que falta.
+> Validado de ponta a ponta na Vercel com um banco Neon real (build → `migrate deploy` → seed → app funcionando). Dois problemas apareceram só durante esse primeiro deploy real, específicos da conta/projeto do usuário (não do código): o projeto tinha sido criado com Framework Preset "Other" (antes de existir código Next.js para detectar), e o Neon exige a connection string direta — não a pooled — para o advisory lock do Migrate. Os dois pontos acima já refletem a correção.
 
 ### O que vem no seed
 
