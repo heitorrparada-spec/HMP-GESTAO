@@ -20,19 +20,20 @@ Protótipo navegável e funcional, para validar o modelo operacional na prática
 
 ### Banco de dados (Neon/Postgres)
 
-O app precisa de uma connection string Postgres em `DATABASE_URL`. Para Neon, use a variante **pooled** (hostname com `-pooler`), que é a recomendada tanto para uso local quanto para funções serverless na Vercel.
+O app precisa de uma connection string Postgres em `DATABASE_URL`. Para Neon, use a variante **pooled** (hostname com `-pooler`), recomendada tanto para uso local quanto para funções serverless na Vercel.
+
+`npm run build` (e o `build` da Vercel, ver abaixo) já roda `prisma migrate deploy` automaticamente antes do `next build` — as tabelas são criadas sozinhas a partir da migration que já está em `prisma/migrations/`, sem precisar rodar nada à parte.
+
+Localmente:
 
 ```bash
 npm install
 cp .env.example .env
 # edite .env e cole sua DATABASE_URL do Neon (ou outro Postgres)
 
-npx prisma migrate deploy     # aplica prisma/migrations/ — cria todas as tabelas
 npm run db:seed               # popula com dados realistas da HMP (ver abaixo)
 npm run dev                   # http://localhost:3000
 ```
-
-> A migration inicial (`prisma/migrations/20260917000000_init/`) já vem pronta no repositório — foi gerada offline (`prisma migrate diff --from-empty`), sem precisar de uma conexão viva com o banco no momento em que foi criada. `migrate deploy` só aplica esse SQL contra o banco real apontado por `DATABASE_URL`.
 
 Para recomeçar do zero (⚠️ **apaga todos os dados** do banco apontado por `DATABASE_URL` e roda o seed de novo):
 
@@ -40,14 +41,19 @@ Para recomeçar do zero (⚠️ **apaga todos os dados** do banco apontado por `
 npm run db:reset
 ```
 
-### Deploy na Vercel
+### Deploy na Vercel (sem precisar rodar nada localmente)
 
 1. Importe o repositório em [vercel.com/new](https://vercel.com/new) (Next.js é detectado automaticamente).
-2. Em **Environment Variables**, adicione `DATABASE_URL` com a mesma connection string do Neon (pooled).
-3. Antes do primeiro deploy ficar realmente utilizável, rode `npx prisma migrate deploy` e `npm run db:seed` uma vez contra esse banco (do seu próprio ambiente local — o build da Vercel não roda migrations automaticamente).
-4. Deploy.
+2. Em **Environment Variables**, adicione:
+   - `DATABASE_URL` — a connection string do Neon (pooled).
+   - `SEED_TOKEN` — qualquer valor secreto à sua escolha (é só a "senha" de um endpoint de bootstrap, ver abaixo).
+3. Deploy. O próprio build já roda a migration e cria as tabelas — não precisa terminal, nem `npx`, nem nada local.
+4. Depois do deploy, popule os dados de demonstração visitando uma vez, no navegador:
+   `https://<seu-projeto>.vercel.app/api/admin/seed?token=<o mesmo valor de SEED_TOKEN>`
+   Isso roda o mesmo seed de `npm run db:seed`, direto no banco de produção. Pode chamar de novo a qualquer momento para resetar a demo ao estado inicial.
+5. **Depois de usar**, remova a variável `SEED_TOKEN` da Vercel (ou troque o valor) — essa rota apaga e recria todos os dados sempre que é chamada, então não é algo para deixar disponível indefinidamente com um token previsível.
 
-> **Nota**: a migração de SQLite para Postgres foi feita e o `npm run build` foi validado localmente, mas `migrate deploy`/`db:seed`/o app rodando contra Postgres **não foram testados de ponta a ponta** neste ambiente — o sandbox de desenvolvimento usado bloqueia acesso de rede a `neon.tech` (mesma política que bloqueia `vercel.com`). Rode os passos acima a partir de uma máquina com rede normal antes de considerar o deploy validado.
+> **Nota**: esta sequência não foi testada de ponta a ponta neste ambiente de desenvolvimento — o sandbox usado aqui bloqueia acesso de rede a `neon.tech` e `vercel.com` (política da organização), então não consegui rodar `migrate deploy`/seed/o app contra o Postgres real a partir daqui. `npm run build` foi validado (sem a etapa de `migrate deploy`, que exige um banco alcançável). O código está pronto; o primeiro deploy real é a validação final que falta.
 
 ### O que vem no seed
 
@@ -75,11 +81,14 @@ Registradas para não serem confundidas com decisões definitivas de arquitetura
 ### Estrutura
 
 ```
-prisma/schema.prisma      Modelo de dados completo
-prisma/seed.ts            Dados de demonstração
-src/app/                  Rotas (App Router) — uma pasta por entidade
-src/app/*/actions.ts      Server Actions (mutações + ActivityLog)
-src/components/ui/        Design system (Badge, Card, StatusTracker, ...)
-src/components/entities/  Componentes específicos de domínio (FeatureStepper)
-src/lib/                  Prisma client, labels/cores por enum, activity log, formatação
+prisma/schema.prisma          Modelo de dados completo
+prisma/migrations/            Migration inicial (Postgres)
+prisma/seed.ts                Wrapper de CLI para o seed (npm run db:seed)
+src/lib/seed-data.ts          Dados de demonstração (fonte única, usada pelo CLI e pela rota abaixo)
+src/app/api/admin/seed/       Bootstrap do seed em produção, protegido por SEED_TOKEN
+src/app/                      Rotas (App Router) — uma pasta por entidade
+src/app/*/actions.ts          Server Actions (mutações + ActivityLog)
+src/components/ui/            Design system (Badge, Card, StatusTracker, ...)
+src/components/entities/      Componentes específicos de domínio (FeatureStepper)
+src/lib/                      Prisma client, labels/cores por enum, activity log, formatação
 ```
