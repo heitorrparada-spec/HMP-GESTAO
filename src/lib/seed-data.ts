@@ -206,6 +206,7 @@ export async function seedDatabase(prisma: PrismaClient) {
       decidedAt: meeting.date,
       meetingId: meeting.id,
       featureId: feature.id,
+      productId: nutria.id,
       participants: {
         create: [heitor, linard, pedro].map((p) => ({ personId: p.id })),
       },
@@ -223,6 +224,7 @@ export async function seedDatabase(prisma: PrismaClient) {
       decidedAt: meeting.date,
       meetingId: meeting.id,
       featureId: feature.id,
+      productId: nutria.id,
       participants: {
         create: [heitor, linard, pedro].map((p) => ({ personId: p.id })),
       },
@@ -382,7 +384,7 @@ export async function seedDatabase(prisma: PrismaClient) {
       entityType: "decision",
       entityId: decisionPriority.id,
       eventType: "decision.created",
-      description: `Decisão registrada: "${decisionPriority.title}"`,
+      description: `Decisão registrada: "${decisionPriority.title}" (afeta ${feature.title}) na reunião "${meeting.title}"`,
       actor: heitor,
     },
     {
@@ -390,7 +392,7 @@ export async function seedDatabase(prisma: PrismaClient) {
       entityType: "decision",
       entityId: decisionMacros.id,
       eventType: "decision.created",
-      description: `Decisão registrada: "${decisionMacros.title}"`,
+      description: `Decisão registrada: "${decisionMacros.title}" (afeta ${feature.title}) na reunião "${meeting.title}"`,
       actor: heitor,
     },
     {
@@ -435,10 +437,18 @@ export async function seedDatabase(prisma: PrismaClient) {
     },
     {
       at: new Date("2026-09-16T18:05:00"),
-      entityType: "task",
+      entityType: "feature",
       entityId: feature.id,
       eventType: "task.created",
-      description: `9 tasks criadas para a Feature "${feature.title}"`,
+      description: `${tasks.length - 1} tasks criadas para a Feature "${feature.title}"`,
+      actor: linard,
+    },
+    {
+      at: new Date("2026-09-16T18:06:00"),
+      entityType: "task",
+      entityId: taskBackend.id,
+      eventType: "task.created_from_decision",
+      description: `Task "${taskBackend.title}" criada a partir da decisão "${decisionMacros.title}" (reunião "${meeting.title}")`,
       actor: linard,
     },
     {

@@ -235,6 +235,7 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
                     </EntityLink>
                     <p className="mt-0.5 text-xs text-ink-faint">
                       {d.author?.name ?? "—"} · {formatRelative(d.decidedAt)}
+                      {d.meeting && ` · na reunião "${d.meeting.title}"`}
                     </p>
                   </li>
                 ))}

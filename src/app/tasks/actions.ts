@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { logActivity } from "@/lib/activity";
 import { getCurrentActor } from "@/lib/actor";
 import { taskStatusMeta } from "@/lib/labels";
+import { parseDateInput } from "@/lib/format";
 import type { Priority, TaskStatus } from "@/generated/prisma/client";
 
 function revalidateTask(taskId: string, featureId: string | null) {
@@ -23,16 +24,50 @@ async function syncDependency(taskId: string, dependsOnId: string | null) {
   }
 }
 
+function readDueDate(formData: FormData): Date | null {
+  const raw = String(formData.get("dueDate") ?? "");
+  if (!raw) return null;
+  const date = parseDateInput(raw);
+  if (!date) throw new Error("Prazo inválido.");
+  return date;
+}
+
 export async function createTask(formData: FormData) {
   const title = String(formData.get("title") ?? "").trim();
-  const featureId = String(formData.get("featureId") ?? "") || null;
   if (!title) throw new Error("Título é obrigatório.");
 
+  const decisionId = String(formData.get("decisionId") ?? "") || null;
+  let featureId = String(formData.get("featureId") ?? "") || null;
   const description = String(formData.get("description") ?? "").trim() || null;
   const assigneeId = String(formData.get("assigneeId") ?? "") || null;
   const priority = (String(formData.get("priority") ?? "P2") || "P2") as Priority;
-  const dueDateRaw = String(formData.get("dueDate") ?? "");
+  const dueDate = readDueDate(formData);
   const dependsOnId = String(formData.get("dependsOnId") ?? "") || null;
+
+  const decision = decisionId
+    ? await prisma.decision.findUnique({ where: { id: decisionId }, include: { meeting: true } })
+    : null;
+  if (decisionId && !decision) throw new Error("Decisão de origem inexistente.");
+
+  // Task nascida de uma decisão fica no contexto dela: na Feature da decisão ou numa Feature do Product dela.
+  if (decision?.featureId) {
+    if (featureId && featureId !== decision.featureId) {
+      throw new Error("A Task precisa ficar na Feature da decisão de origem.");
+    }
+    featureId = decision.featureId;
+  }
+
+  const [feature, assignee, dependsOn] = await Promise.all([
+    featureId ? prisma.feature.findUnique({ where: { id: featureId } }) : null,
+    assigneeId ? prisma.person.findUnique({ where: { id: assigneeId } }) : null,
+    dependsOnId ? prisma.task.findUnique({ where: { id: dependsOnId } }) : null,
+  ]);
+  if (featureId && !feature) throw new Error("Feature inexistente.");
+  if (feature && decision && !decision.featureId && decision.productId && feature.productId !== decision.productId) {
+    throw new Error("A Feature da Task precisa ser do mesmo Product da decisão de origem.");
+  }
+  if (assigneeId && !assignee) throw new Error("Responsável inexistente.");
+  if (dependsOnId && !dependsOn) throw new Error("Task de dependência inexistente.");
 
   const actor = await getCurrentActor();
 
@@ -41,26 +76,44 @@ export async function createTask(formData: FormData) {
       title,
       description,
       featureId,
+      decisionId,
       assigneeId,
       priority,
       status: "TODO",
-      dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
+      dueDate,
       createdById: actor?.id ?? null,
     },
   });
 
   if (dependsOnId) await syncDependency(created.id, dependsOnId);
 
-  await logActivity({
-    entityType: "task",
-    entityId: created.id,
-    eventType: "task.created",
-    description: `Task "${created.title}" criada`,
-    actorId: actor?.id,
-    actorName: actor?.name,
-  });
+  await logActivity(
+    decision
+      ? {
+          entityType: "task",
+          entityId: created.id,
+          eventType: "task.created_from_decision",
+          description: `Task "${created.title}" criada a partir da decisão "${decision.title}"${
+            decision.meeting ? ` (reunião "${decision.meeting.title}")` : ""
+          }`,
+          actorId: actor?.id,
+          actorName: actor?.name,
+        }
+      : {
+          entityType: "task",
+          entityId: created.id,
+          eventType: "task.created",
+          description: `Task "${created.title}" criada`,
+          actorId: actor?.id,
+          actorName: actor?.name,
+        },
+  );
 
   revalidateTask(created.id, featureId);
+  if (decision) {
+    revalidatePath(`/decisions/${decision.id}`);
+    if (decision.meetingId) revalidatePath(`/meetings/${decision.meetingId}`);
+  }
   redirect(`/tasks/${created.id}`);
 }
 
@@ -72,7 +125,7 @@ export async function updateTask(taskId: string, formData: FormData) {
   const description = String(formData.get("description") ?? "").trim() || null;
   const assigneeId = String(formData.get("assigneeId") ?? "") || null;
   const priority = (String(formData.get("priority") ?? "P2") || "P2") as Priority;
-  const dueDateRaw = String(formData.get("dueDate") ?? "");
+  const dueDate = readDueDate(formData);
   const status = String(formData.get("status") ?? task.status) as TaskStatus;
   const blockedReason = String(formData.get("blockedReason") ?? "").trim() || null;
   const dependsOnId = String(formData.get("dependsOnId") ?? "") || null;
@@ -88,7 +141,7 @@ export async function updateTask(taskId: string, formData: FormData) {
       assigneeId,
       priority,
       status,
-      dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
+      dueDate,
       blockedReason: status === "BLOCKED" ? blockedReason : null,
     },
   });

@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/ui/ConfirmSubmitButton";
 import { taskStatusOrder, taskStatusMeta } from "@/lib/labels";
+import { toDateInputValue } from "@/lib/format";
 import { updateTask, deleteTask } from "../../actions";
 
 export default async function EditTaskPage({ params }: { params: Promise<{ id: string }> }) {
@@ -109,7 +110,7 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
               <input
                 type="date"
                 name="dueDate"
-                defaultValue={task.dueDate ? task.dueDate.toISOString().slice(0, 10) : ""}
+                defaultValue={toDateInputValue(task.dueDate)}
                 className="w-full rounded-md border border-border px-3 py-2 text-sm"
               />
             </Field>

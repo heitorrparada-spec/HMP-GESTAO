@@ -98,8 +98,8 @@ Dados demonstrativos da HMP, prontos para o passeio funcional descrito no crité
 
 - Empresa **HMP**, pessoas **Heitor** (Product), **Linard** (Architecture), **Pedro** (Engineering).
 - Produtos **Nutria** (Development) e **Exomia** (Discovery).
-- Feature **"Elaboração do Plano Alimentar"** (Nutria), em `DEVELOPMENT`, com contexto, problema, requisitos, fluxo funcional, arquitetura, 9 tasks (algumas concluídas, uma em andamento, uma bloqueada), 3 decisões, 4 artifacts e critérios de aceite — pronta para ser levada até `VALIDATION` ao vivo durante uma demonstração.
-- Uma Meeting com as 3 pessoas, que originou as decisões.
+- Feature **"Elaboração do Plano Alimentar"** (Nutria), em `DEVELOPMENT`, com contexto, problema, requisitos, fluxo funcional, arquitetura, 9 tasks (algumas concluídas, uma em andamento, uma bloqueada), 2 decisões, 4 artifacts e critérios de aceite — pronta para ser levada até `VALIDATION` ao vivo durante uma demonstração.
+- Uma Meeting com as 3 pessoas, que originou as 2 decisões da Feature; uma delas gerou a task "Implementar backend" — a cadeia Meeting → Decision → Task → Feature → Product já vem navegável. Uma terceira decisão (Exomia) afeta só o Product.
 - Histórico completo (`ActivityLog`) reconstruindo a cadeia inteira da Feature, da criação até o estado atual.
 
 Artifacts marcados com `[DEMO]` usam links de exemplo (`example.com`) — não são documentos reais.
@@ -116,7 +116,9 @@ Registradas para não serem confundidas com decisões definitivas de arquitetura
 - Entrar em Review não exige Tasks concluídas: o modelo não distingue Tasks bloqueantes de informativas/canceladas, então a Feature só sinaliza tasks abertas/bloqueadas, sem bloquear a transição.
 - `Product`/`Release` são roteados por `id`, não por slug.
 - Artifacts são só link/metadado (sem upload de arquivo real).
-- Meetings e Artifacts são somente leitura neste protótipo; Decisions têm um formulário real de criação.
+- Meetings e Decisions têm criação e edição reais, mas sem exclusão e sem status próprio: a Meeting é contexto e a Decision é registro — a execução é acompanhada pelas Tasks que ela gera. Artifacts continuam somente leitura.
+- Uma Decision "afeta" no máximo uma coisa: uma Feature (que já implica o Product) ou só um Product. Depois que a decisão gera Tasks, esse vínculo trava, para as duas pontas não divergirem.
+- Task criada a partir de uma Decision guarda só `decisionId` e fica na Feature da decisão (ou numa Feature do Product dela, ou avulsa se a decisão não afeta nada); a reunião de origem vem pela decisão. `Task.meetingId` fica reservado para follow-ups diretos de reunião, que ainda não têm UI.
 
 ### Estrutura
 
