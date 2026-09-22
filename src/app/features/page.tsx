@@ -17,6 +17,14 @@ export default async function FeaturesPage() {
         eyebrow="HMP OS"
         title="Features"
         description="Unidade central de valor — do problema à produção."
+        actions={
+          <Link
+            href="/features/new"
+            className="rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90"
+          >
+            + Nova Feature
+          </Link>
+        }
       />
 
       {features.length === 0 ? (

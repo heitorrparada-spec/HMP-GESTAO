@@ -134,7 +134,7 @@ export default async function ProductPage({
       )}
 
       {tab === "features" && (
-        <FeatureListSection features={product.features} />
+        <FeatureListSection productId={product.id} features={product.features} />
       )}
 
       {tab === "tasks" && <TaskListSection tasks={tasks} />}
@@ -164,8 +164,10 @@ function StatTile({ label, value }: { label: string; value: number }) {
 }
 
 function FeatureListSection({
+  productId,
   features,
 }: {
+  productId: string;
   features: Array<{
     id: string;
     title: string;
@@ -176,10 +178,21 @@ function FeatureListSection({
     tasks: Array<{ status: string }>;
   }>;
 }) {
-  if (features.length === 0) return <EmptyState icon="feature" title="Nenhuma Feature ainda" />;
   return (
-    <div className="space-y-2">
-      {features.map((f) => {
+    <div>
+      <div className="mb-3 flex justify-end">
+        <Link
+          href={`/features/new?productId=${productId}`}
+          className="text-xs font-medium text-brand hover:underline"
+        >
+          + Nova Feature
+        </Link>
+      </div>
+      {features.length === 0 ? (
+        <EmptyState icon="feature" title="Nenhuma Feature ainda" />
+      ) : (
+        <div className="space-y-2">
+          {features.map((f) => {
         const done = f.tasks.filter((t) => t.status === "DONE").length;
         return (
           <Link
@@ -197,7 +210,9 @@ function FeatureListSection({
             <FeatureStatusBadge status={f.status} />
           </Link>
         );
-      })}
+          })}
+        </div>
+      )}
     </div>
   );
 }

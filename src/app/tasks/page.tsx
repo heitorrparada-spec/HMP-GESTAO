@@ -24,6 +24,14 @@ export default async function TasksPage() {
         eyebrow="HMP OS"
         title="Tasks"
         description="Unidade de execução técnica — vinculada a uma Feature ou avulsa."
+        actions={
+          <Link
+            href="/tasks/new"
+            className="rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90"
+          >
+            + Nova Task
+          </Link>
+        }
       />
 
       <div className="flex gap-4 overflow-x-auto pb-2">

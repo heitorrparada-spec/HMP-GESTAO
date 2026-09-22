@@ -53,9 +53,17 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
         ]}
       />
 
-      <div className="mb-5 flex flex-wrap items-center gap-2.5">
-        <h1 className="text-xl font-semibold text-ink">{task.title}</h1>
-        <PriorityBadge priority={task.priority} />
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h1 className="text-xl font-semibold text-ink">{task.title}</h1>
+          <PriorityBadge priority={task.priority} />
+        </div>
+        <Link
+          href={`/tasks/${task.id}/edit`}
+          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
+        >
+          Editar
+        </Link>
       </div>
 
       <StatusTracker
@@ -79,6 +87,23 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
               </p>
             )}
           </SectionCard>
+
+          {task.feature && (task.feature.problem || task.feature.objective) && (
+            <SectionCard title="Contexto da Feature">
+              {task.feature.problem && (
+                <p className="text-sm text-ink">
+                  <span className="text-xs font-medium uppercase tracking-wide text-ink-faint">Problema: </span>
+                  {task.feature.problem}
+                </p>
+              )}
+              {task.feature.objective && (
+                <p className="mt-2 text-sm text-ink">
+                  <span className="text-xs font-medium uppercase tracking-wide text-ink-faint">Objetivo: </span>
+                  {task.feature.objective}
+                </p>
+              )}
+            </SectionCard>
+          )}
 
           {(task.dependsOn.length > 0 || task.blocks.length > 0) && (
             <SectionCard title="Dependências">

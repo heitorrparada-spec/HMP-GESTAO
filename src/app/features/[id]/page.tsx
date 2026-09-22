@@ -9,16 +9,29 @@ import { EntityLink } from "@/components/ui/EntityLink";
 import {
   FeatureStatusBadge,
   PriorityBadge,
-  RequirementStatusBadge,
   TaskStatusBadge,
   ValidationResultBadge,
 } from "@/components/ui/StatusBadges";
 import { PersonChip, PersonPlaceholder } from "@/components/ui/PersonChip";
 import { ActivityFeed } from "@/components/ActivityFeed";
+import { SubmitButton } from "@/components/ui/SubmitButton";
+import { ConfirmSubmitButton } from "@/components/ui/ConfirmSubmitButton";
 import { formatDate, formatDateTime, formatRelative } from "@/lib/format";
-import { featureStatusMeta, featureStatusOrder } from "@/lib/labels";
-import { updateFeatureStatus, recordValidation } from "../actions";
-import type { CriteriaStatus, FeatureStatus, ValidationResult } from "@/generated/prisma/client";
+import { featureStatusMeta, featureStatusOrder, priorityMeta, requirementStatusMeta } from "@/lib/labels";
+import {
+  updateFeatureStatus,
+  recordValidation,
+  createRequirement,
+  updateRequirement,
+  deleteRequirement,
+} from "../actions";
+import type {
+  CriteriaStatus,
+  FeatureStatus,
+  Priority,
+  RequirementStatus,
+  ValidationResult,
+} from "@/generated/prisma/client";
 
 export default async function FeaturePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -78,6 +91,12 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
             <p className="mt-1 text-xs text-ink-faint">Release: {feature.release.name}</p>
           )}
         </div>
+        <Link
+          href={`/features/${feature.id}/edit`}
+          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
+        >
+          Editar
+        </Link>
       </div>
 
       <StatusTracker
@@ -100,20 +119,7 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
             </dl>
           </SectionCard>
 
-          <SectionCard title={`Requisitos (${feature.requirements.length})`}>
-            {feature.requirements.length === 0 ? (
-              <EmptyState title="Nenhum requisito registrado ainda" />
-            ) : (
-              <ul className="space-y-2">
-                {feature.requirements.map((r) => (
-                  <li key={r.id} className="flex items-start justify-between gap-3 rounded-md border border-border p-2.5">
-                    <span className="text-sm text-ink">{r.description}</span>
-                    <RequirementStatusBadge status={r.status} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </SectionCard>
+          <RequirementsSection featureId={feature.id} requirements={feature.requirements} />
 
           <SectionCard title="Fluxo funcional & arquitetura">
             <dl className="space-y-4 text-sm">
@@ -131,9 +137,17 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
           <SectionCard
             title={`Tasks (${tasksDone}/${feature.tasks.length})`}
             action={
-              <Link href="/tasks" className="text-xs font-medium text-brand hover:underline">
-                Ver todas
-              </Link>
+              <div className="flex items-center gap-3">
+                <Link
+                  href={`/tasks/new?featureId=${feature.id}`}
+                  className="text-xs font-medium text-brand hover:underline"
+                >
+                  + Nova
+                </Link>
+                <Link href="/tasks" className="text-xs font-medium text-brand hover:underline">
+                  Ver todas
+                </Link>
+              </div>
             }
           >
             {feature.tasks.length === 0 ? (
@@ -281,6 +295,120 @@ function ArtifactMiniList({
         </li>
       ))}
     </ul>
+  );
+}
+
+const requirementStatusOrder: RequirementStatus[] = ["PROPOSED", "APPROVED", "IMPLEMENTED", "TESTED"];
+const priorityOrder: Priority[] = ["P0", "P1", "P2", "P3"];
+
+function RequirementsSection({
+  featureId,
+  requirements,
+}: {
+  featureId: string;
+  requirements: Array<{
+    id: string;
+    description: string;
+    priority: Priority;
+    status: RequirementStatus;
+    source: string | null;
+  }>;
+}) {
+  return (
+    <SectionCard title={`Requisitos (${requirements.length})`}>
+      {requirements.length === 0 ? (
+        <EmptyState title="Nenhum requisito registrado ainda" />
+      ) : (
+        <div className="space-y-2">
+          {requirements.map((r) => {
+            const save = updateRequirement.bind(null, r.id, featureId);
+            const remove = deleteRequirement.bind(null, r.id, featureId);
+            return (
+              <div key={r.id} className="rounded-md border border-border p-2.5">
+                <form action={save} className="space-y-2">
+                  <input
+                    name="description"
+                    defaultValue={r.description}
+                    required
+                    className="w-full rounded-md border border-border px-2 py-1.5 text-sm"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      name="priority"
+                      defaultValue={r.priority}
+                      className="rounded-md border border-border px-2 py-1.5 text-xs"
+                    >
+                      {priorityOrder.map((p) => (
+                        <option key={p} value={p}>
+                          {priorityMeta[p].label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      name="status"
+                      defaultValue={r.status}
+                      className="rounded-md border border-border px-2 py-1.5 text-xs"
+                    >
+                      {requirementStatusOrder.map((s) => (
+                        <option key={s} value={s}>
+                          {requirementStatusMeta[s].label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      name="source"
+                      defaultValue={r.source ?? ""}
+                      placeholder="Fonte (opcional)"
+                      className="w-40 rounded-md border border-border px-2 py-1.5 text-xs"
+                    />
+                    <button
+                      type="submit"
+                      className="rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90"
+                    >
+                      Salvar
+                    </button>
+                  </div>
+                </form>
+                <form action={remove} className="mt-1.5">
+                  <ConfirmSubmitButton
+                    confirmMessage={`Excluir o requisito "${r.description}"?`}
+                    className="text-xs text-red-600 hover:underline"
+                  >
+                    Excluir
+                  </ConfirmSubmitButton>
+                </form>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <form action={createRequirement.bind(null, featureId)} className="mt-3 space-y-2 border-t border-border pt-3">
+        <input
+          name="description"
+          required
+          placeholder="Descrição do novo requisito"
+          className="w-full rounded-md border border-border px-2 py-1.5 text-sm"
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <select name="priority" defaultValue="P2" className="rounded-md border border-border px-2 py-1.5 text-xs">
+            {priorityOrder.map((p) => (
+              <option key={p} value={p}>
+                {priorityMeta[p].label}
+              </option>
+            ))}
+          </select>
+          <input
+            name="source"
+            placeholder="Fonte (opcional)"
+            className="w-40 rounded-md border border-border px-2 py-1.5 text-xs"
+          />
+          <SubmitButton pendingLabel="Adicionando…" className="px-3 py-1.5 text-xs">
+            + Adicionar
+          </SubmitButton>
+        </div>
+      </form>
+    </SectionCard>
   );
 }
 
