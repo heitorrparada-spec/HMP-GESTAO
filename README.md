@@ -14,30 +14,44 @@ Protótipo navegável e funcional, para validar o modelo operacional na prática
 ### Stack
 
 - **Next.js (App Router) + TypeScript** — Server Components para leitura, Server Actions para toda mutação (sem API separada). Todas as rotas são `force-dynamic`: o app depende 100% de dados ao vivo (banco + cookie de ator), não há nada a pré-renderizar no build.
-- **Prisma + Postgres** — usa driver adapter (`@prisma/adapter-pg`), exigido a partir do Prisma 7. Funciona com qualquer Postgres (Neon, Supabase, Vercel Postgres); o protótipo foi validado com **Neon**.
+- **Prisma + Postgres** — usa driver adapter (`@prisma/adapter-pg`), exigido a partir do Prisma 7. Funciona com qualquer Postgres (Neon, Supabase, Vercel Postgres, um Postgres local); o protótipo foi validado com **Neon** e com **Postgres local** (incl. via Docker).
 - **Tailwind CSS** — componentes próprios (sem UI kit pesada), visual inspirado em Linear/Height/Notion.
 - Sem autenticação real — um seletor de "atuando como" (cookie) simula o usuário atual para fins de demonstração.
 
-### Banco de dados (Neon/Postgres)
+### Pré-requisitos
 
-O app usa duas connection strings:
+- **Node.js 20 ou superior** (testado com Node 22) e **npm**.
+- Um **Postgres** para apontar o app — escolha uma opção:
+  1. **Docker** (mais simples): `docker compose up -d` sobe um Postgres 16 já configurado (`docker-compose.yml` na raiz, credenciais de desenvolvimento apenas).
+  2. Um **Postgres já instalado** localmente.
+  3. Um projeto **Neon** (ou Supabase/Vercel Postgres) — o mesmo tipo de banco usado em produção.
 
-- `DATABASE_URL` — a variante **pooled** do Neon (hostname com `-pooler`), usada pelo app em runtime. Recomendada tanto local quanto em serverless.
-- `DIRECT_URL` — a variante **direta** (mesmo hostname, sem `-pooler`), usada só por `prisma migrate deploy`/`migrate dev`. O advisory lock que o Migrate usa para evitar migrations concorrentes não é confiável através do pooler (PgBouncer em modo transaction) — sem isso, `migrate deploy` trava e falha com `Error: P1002` (timeout tentando `pg_advisory_lock`). Localmente, se não definir `DIRECT_URL`, cai automaticamente para `DATABASE_URL`.
+### Configurar o `.env`
 
-No painel do Neon, a caixa de "Connection string" tem as duas variantes (normalmente um toggle "Pooled connection"/"Connection pooling") — copie cada uma para a variável certa.
+```bash
+cp .env.example .env
+```
 
-`npm run build` (e o `build` da Vercel, ver abaixo) já roda `prisma migrate deploy` automaticamente antes do `next build` — as tabelas são criadas sozinhas a partir da migration que já está em `prisma/migrations/`, sem precisar rodar nada à parte.
+- `DATABASE_URL` — connection string do Postgres que a aplicação usa em runtime.
+  - Com o Docker acima: `postgresql://hmp:hmp@localhost:5432/hmp_os`.
+  - Com Neon: a variante **pooled** (hostname com `-pooler`).
+- `DIRECT_URL` — só necessária atrás de um pooler em modo transaction (caso do Neon). Usada exclusivamente por `prisma migrate deploy`/`migrate dev`: o advisory lock que o Migrate usa para evitar migrations concorrentes não é confiável através de um pooler — sem isso, a migration trava e falha com `Error: P1002` (timeout tentando `pg_advisory_lock`). Com Docker ou Postgres local (sem pooler), pode deixar sem definir — cai automaticamente para `DATABASE_URL`.
+  - No painel do Neon, a caixa de "Connection string" tem as duas variantes (normalmente um toggle "Pooled connection"/"Connection pooling") — copie cada uma para a variável certa.
+- `SEED_TOKEN` — opcional, só usado pela rota `/api/admin/seed` (bootstrap em produção sem acesso local ao banco, ver "Deploy na Vercel" abaixo). Não precisa dele para rodar local.
 
-Localmente:
+Nunca commite o `.env` com credenciais reais — ele já está no `.gitignore` (`.env.example` é o único versionado, e só tem placeholders).
+
+### Instalação
 
 ```bash
 npm install
-cp .env.example .env
-# edite .env: DATABASE_URL (pooled) e DIRECT_URL (direta) do Neon
+```
 
-npm run db:seed               # popula com dados realistas da HMP (ver abaixo)
-npm run dev                   # http://localhost:3000
+### Banco
+
+```bash
+npx prisma migrate deploy   # cria as tabelas a partir da migration em prisma/migrations/
+npm run db:seed             # popula com dados realistas da HMP (ver "O que vem no seed" abaixo)
 ```
 
 Para recomeçar do zero (⚠️ **apaga todos os dados** do banco apontado por `DATABASE_URL` e roda o seed de novo):
@@ -45,6 +59,21 @@ Para recomeçar do zero (⚠️ **apaga todos os dados** do banco apontado por `
 ```bash
 npm run db:reset
 ```
+
+### Desenvolvimento
+
+```bash
+npm run dev
+# http://localhost:3000
+```
+
+### Build
+
+```bash
+npm run build
+```
+
+Roda `prisma migrate deploy` automaticamente antes do `next build` (o mesmo comando usado no build da Vercel, ver abaixo) — não precisa rodar a migration separadamente antes de buildar.
 
 ### Deploy na Vercel (sem precisar rodar nada localmente)
 
@@ -87,6 +116,7 @@ Registradas para não serem confundidas com decisões definitivas de arquitetura
 ### Estrutura
 
 ```
+docker-compose.yml            Postgres local opcional (docker compose up -d)
 prisma/schema.prisma          Modelo de dados completo
 prisma/migrations/            Migration inicial (Postgres)
 prisma/seed.ts                Wrapper de CLI para o seed (npm run db:seed)
