@@ -6,6 +6,8 @@ Repositório do **HMP OS** — sistema operacional interno da HMP para gestão e
 
 - [HMP OS — Discovery & Architecture v0.1](docs/hmp-os/discovery-architecture-v0.1.md) — problema, entidades candidatas e perguntas em aberto.
 - [HMP OS — Conceptual Architecture v0.1](docs/hmp-os/conceptual-architecture-v0.1.md) — proposta estrutural concreta: entidades, campos, workflow, papéis e MVP.
+- [HMP OS — Validation Report v0.1](docs/hmp-os/validation-v0.1.md) — validação técnica de "clone → configure → rode": ambiente, infraestrutura, rotas, vertical slice, problemas e correções.
+- [HMP OS — Roteiro de Teste v0.1](docs/hmp-os/user-validation-v0.1.md) — roteiro prático (não-técnico) para o Heitor validar o produto na prática.
 
 ## HMP OS v0.1 — Functional Prototype
 
