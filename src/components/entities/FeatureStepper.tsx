@@ -1,17 +1,23 @@
 import clsx from "clsx";
 import type { FeatureStatus } from "@/generated/prisma/client";
 
-const stageOrder = ["SPECIFICATION", "ARCHITECTURE", "DEVELOPMENT", "VALIDATION"] as const satisfies readonly FeatureStatus[];
+const stageOrder = [
+  "SPECIFICATION",
+  "ARCHITECTURE",
+  "DEVELOPMENT",
+  "REVIEW",
+  "VALIDATION",
+] as const satisfies readonly FeatureStatus[];
 const stageLabels: Record<(typeof stageOrder)[number], string> = {
   SPECIFICATION: "Specification",
   ARCHITECTURE: "Architecture",
   DEVELOPMENT: "Development",
+  REVIEW: "Review",
   VALIDATION: "Validation",
 };
 
 function stageIndex(status: FeatureStatus): number {
   if (status === "BACKLOG" || status === "DISCOVERY") return -1;
-  if (status === "REVIEW") return stageOrder.indexOf("DEVELOPMENT");
   if (status === "DONE") return stageOrder.length;
   return stageOrder.indexOf(status);
 }

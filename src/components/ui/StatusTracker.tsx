@@ -5,6 +5,8 @@ export type TrackerStep = {
   value: string;
   label: string;
   action: () => Promise<void>;
+  disabled?: boolean;
+  disabledReason?: string;
 };
 
 /** Fileira de estados clicáveis — cada um é um form com uma server action já vinculada (bind). */
@@ -17,18 +19,22 @@ export function StatusTracker({ steps, current }: { steps: TrackerStep[]; curren
         {steps.map((step, i) => {
           const isCurrent = step.value === current;
           const isPast = currentIndex !== -1 && i < currentIndex;
+          const isDisabled = isCurrent || step.disabled;
           return (
             <form key={step.value} action={step.action} className="flex-1">
               <button
                 type="submit"
-                disabled={isCurrent}
+                disabled={isDisabled}
                 className={clsx(
                   "flex w-full flex-col items-center gap-1 border-r border-border px-3 py-3 text-xs font-medium transition-colors last:border-r-0",
                   isCurrent && "bg-brand text-white",
-                  !isCurrent && isPast && "bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
-                  !isCurrent && !isPast && "text-ink-muted hover:bg-slate-50 hover:text-ink",
+                  !isCurrent && isPast && "bg-emerald-50 text-emerald-700",
+                  !isCurrent && isPast && !step.disabled && "hover:bg-emerald-100",
+                  !isCurrent && !isPast && !step.disabled && "text-ink-muted hover:bg-slate-50 hover:text-ink",
+                  !isCurrent && !isPast && step.disabled && "text-ink-faint/60",
+                  !isCurrent && step.disabled && "cursor-not-allowed",
                 )}
-                title={isCurrent ? "Estado atual" : `Mover para ${step.label}`}
+                title={isCurrent ? "Estado atual" : step.disabled ? step.disabledReason : `Mover para ${step.label}`}
               >
                 {step.label}
               </button>

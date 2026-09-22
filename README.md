@@ -110,7 +110,10 @@ Registradas para não serem confundidas com decisões definitivas de arquitetura
 
 - `Role` é um enum em `Person`, não uma entidade própria.
 - `Decision` liga a `Feature`/`Product` por FK direta, não por uma tabela de vínculo N—N genérica.
-- Fluxo da Feature simplificado a 8 estados (`BACKLOG…DONE`), sem `PRIORITIZATION` nem a separação `APPROVED`/`RELEASED` propostas no documento conceitual.
+- Fluxo da Feature simplificado a 8 estados (`BACKLOG…DONE`), sem `PRIORITIZATION` nem a separação `APPROVED`/`RELEASED` propostas no documento conceitual. A aprovação fica registrada no `ValidationRecord` e leva a Feature direto para `DONE`.
+- Gates do workflow (aplicados nas Server Actions, não só na UI): `DONE` só é alcançado aprovando em Validation; `VALIDATION` só a partir de `REVIEW`; `DONE` é terminal. Os estágios anteriores a Review continuam livres nos dois sentidos.
+- Todos os Acceptance Criteria são tratados como obrigatórios (o modelo não tem campo "opcional"): aprovar exige ao menos 1 critério e todos em "Passou". Critérios ficam travados em Validation e depois de Done.
+- Entrar em Review não exige Tasks concluídas: o modelo não distingue Tasks bloqueantes de informativas/canceladas, então a Feature só sinaliza tasks abertas/bloqueadas, sem bloquear a transição.
 - `Product`/`Release` são roteados por `id`, não por slug.
 - Artifacts são só link/metadado (sem upload de arquivo real).
 - Meetings e Artifacts são somente leitura neste protótipo; Decisions têm um formulário real de criação.
