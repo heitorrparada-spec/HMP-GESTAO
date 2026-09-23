@@ -29,7 +29,9 @@ export async function Sidebar() {
   ]);
 
   return (
-    <aside className="flex h-screen w-60 shrink-0 flex-col border-r border-border bg-surface">
+    // sticky + dvh: o seletor de usuário fica sempre visível. Com h-screen (100vh), no celular a base da
+    // barra ficava por baixo da barra do navegador, e em páginas longas ela rolava para fora da tela.
+    <aside className="sticky top-0 flex h-dvh w-60 shrink-0 flex-col border-r border-border bg-surface">
       <div className="flex items-center gap-2 px-4 py-4">
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-ink text-xs font-bold text-white">
           H

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 import { Avatar } from "@/components/ui/PersonChip";
 import { roleMeta } from "@/lib/labels";
 import { ACTOR_COOKIE } from "@/lib/actor-cookie";
@@ -17,12 +17,18 @@ export function UserSwitcher({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const current = people.find((p) => p.id === currentId) ?? null;
+  // Mostra a pessoa escolhida na hora: no deploy, o refresh do servidor leva alguns segundos e,
+  // sem retorno visual, a troca parecia não ter funcionado.
+  const [shownId, setShownId] = useOptimistic(currentId);
+  const current = people.find((p) => p.id === shownId) ?? null;
 
   function select(id: string) {
     document.cookie = `${ACTOR_COOKIE}=${id}; path=/; max-age=31536000`;
     setOpen(false);
-    startTransition(() => router.refresh());
+    startTransition(() => {
+      setShownId(id);
+      router.refresh();
+    });
   }
 
   return (
@@ -42,7 +48,7 @@ export function UserSwitcher({
             {current ? current.name : "Selecionar usuário"}
           </span>
           <span className="block truncate text-xs text-ink-faint">
-            {current ? roleMeta[current.role as RoleName].short : "Atuando como…"}
+            {isPending ? "Trocando…" : current ? roleMeta[current.role as RoleName].short : "Atuando como…"}
           </span>
         </span>
       </button>
@@ -52,6 +58,9 @@ export function UserSwitcher({
           <p className="px-2 py-1.5 text-xs font-medium uppercase tracking-wide text-ink-faint">
             Atuando como
           </p>
+          {people.length === 0 && (
+            <p className="px-2 pb-1.5 text-sm text-ink-muted">Nenhuma pessoa cadastrada — rode o seed (ver README).</p>
+          )}
           {people.map((person) => (
             <button
               key={person.id}
