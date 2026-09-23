@@ -194,6 +194,15 @@ export async function seedDatabase(prisma: PrismaClient) {
     data: { meetingId: meeting.id },
   });
 
+  // Data relativa: a próxima reunião semanal continua no futuro sempre que o seed roda.
+  const nextMeeting = await prisma.meeting.create({
+    data: {
+      title: "Reunião HMP — Acompanhamento semanal",
+      date: daysFromNow(3, 14, 0),
+      participants: { create: [heitor, linard, pedro].map((p) => ({ personId: p.id })) },
+    },
+  });
+
   const decisionPriority = await prisma.decision.create({
     data: {
       title: "Planejamento Alimentar será tratado como Feature P0 do Nutria",
@@ -206,6 +215,7 @@ export async function seedDatabase(prisma: PrismaClient) {
       decidedAt: meeting.date,
       meetingId: meeting.id,
       featureId: feature.id,
+      productId: nutria.id,
       participants: {
         create: [heitor, linard, pedro].map((p) => ({ personId: p.id })),
       },
@@ -223,6 +233,7 @@ export async function seedDatabase(prisma: PrismaClient) {
       decidedAt: meeting.date,
       meetingId: meeting.id,
       featureId: feature.id,
+      productId: nutria.id,
       participants: {
         create: [heitor, linard, pedro].map((p) => ({ personId: p.id })),
       },
@@ -337,10 +348,11 @@ export async function seedDatabase(prisma: PrismaClient) {
       description: `Feature "${feature.title}" avançou de Backlog para Discovery`,
       actor: heitor,
     },
+    // Vincular artifact não é ação da UI (Artifacts são só leitura): estes eventos narram a demo e apontam para o artifact.
     {
       at: new Date("2026-09-02T15:00:00"),
       entityType: "artifact",
-      entityId: feature.id,
+      entityId: artifactResearch.id,
       eventType: "artifact.linked",
       description: `Artifact "${artifactResearch.title}" vinculado à Feature "${feature.title}"`,
       actor: heitor,
@@ -382,7 +394,7 @@ export async function seedDatabase(prisma: PrismaClient) {
       entityType: "decision",
       entityId: decisionPriority.id,
       eventType: "decision.created",
-      description: `Decisão registrada: "${decisionPriority.title}"`,
+      description: `Decisão registrada: "${decisionPriority.title}" (afeta ${feature.title}) na reunião "${meeting.title}"`,
       actor: heitor,
     },
     {
@@ -390,7 +402,7 @@ export async function seedDatabase(prisma: PrismaClient) {
       entityType: "decision",
       entityId: decisionMacros.id,
       eventType: "decision.created",
-      description: `Decisão registrada: "${decisionMacros.title}"`,
+      description: `Decisão registrada: "${decisionMacros.title}" (afeta ${feature.title}) na reunião "${meeting.title}"`,
       actor: heitor,
     },
     {
@@ -404,7 +416,7 @@ export async function seedDatabase(prisma: PrismaClient) {
     {
       at: new Date("2026-09-16T16:00:00"),
       entityType: "artifact",
-      entityId: feature.id,
+      entityId: artifactC4.id,
       eventType: "artifact.linked",
       description: `Artifact "${artifactC4.title}" vinculado à Feature "${feature.title}"`,
       actor: linard,
@@ -412,7 +424,7 @@ export async function seedDatabase(prisma: PrismaClient) {
     {
       at: new Date("2026-09-16T16:30:00"),
       entityType: "artifact",
-      entityId: feature.id,
+      entityId: artifactClass.id,
       eventType: "artifact.linked",
       description: `Artifact "${artifactClass.title}" vinculado à Feature "${feature.title}"`,
       actor: linard,
@@ -420,7 +432,7 @@ export async function seedDatabase(prisma: PrismaClient) {
     {
       at: new Date("2026-09-16T17:00:00"),
       entityType: "artifact",
-      entityId: feature.id,
+      entityId: artifactSpec.id,
       eventType: "artifact.linked",
       description: `Artifact "${artifactSpec.title}" vinculado à Feature "${feature.title}"`,
       actor: heitor,
@@ -435,10 +447,18 @@ export async function seedDatabase(prisma: PrismaClient) {
     },
     {
       at: new Date("2026-09-16T18:05:00"),
-      entityType: "task",
+      entityType: "feature",
       entityId: feature.id,
       eventType: "task.created",
-      description: `9 tasks criadas para a Feature "${feature.title}"`,
+      description: `${tasks.length - 1} tasks criadas para a Feature "${feature.title}"`,
+      actor: linard,
+    },
+    {
+      at: new Date("2026-09-16T18:06:00"),
+      entityType: "task",
+      entityId: taskBackend.id,
+      eventType: "task.created_from_decision",
+      description: `Task "${taskBackend.title}" criada a partir da decisão "${decisionMacros.title}" (reunião "${meeting.title}")`,
       actor: linard,
     },
     {
@@ -481,6 +501,14 @@ export async function seedDatabase(prisma: PrismaClient) {
       description: `Task "${taskFrontend.title}" foi bloqueada: aguardando endpoints do backend`,
       actor: pedro,
     },
+    {
+      at: new Date("2026-09-17T10:00:00"),
+      entityType: "meeting",
+      entityId: nextMeeting.id,
+      eventType: "meeting.created",
+      description: `Reunião "${nextMeeting.title}" registrada`,
+      actor: heitor,
+    },
   ];
 
   for (const log of logs) {
@@ -503,6 +531,7 @@ export async function seedDatabase(prisma: PrismaClient) {
     products: [nutria.name, exomia.name],
     feature: { title: feature.title, status: feature.status },
     tasks: tasks.length,
+    meetings: 2,
     decisions: 3,
     artifacts: 4,
     activityLog: logs.length,

@@ -62,10 +62,19 @@ export default async function ValidationsPage() {
                     <p className="mt-1 text-xs text-ink-faint">
                       Tentativa {v.attemptNumber} · {v.validatedBy?.name ?? "—"} ·{" "}
                       {formatDateTime(v.validatedAt ?? v.createdAt)}
+                      {criteriaSummary(v.criteriaSnapshot)}
                     </p>
                     {v.issuesFound && (
                       <p className="mt-1 text-xs text-red-600">Problemas: {v.issuesFound}</p>
                     )}
+                    <p className="mt-1 text-xs text-ink-faint">
+                      →{" "}
+                      {v.overallResult === "APPROVED"
+                        ? "Feature avançou para Done"
+                        : v.overallResult === "REJECTED"
+                          ? "Feature retornou para Development"
+                          : "Aguardando resultado"}
+                    </p>
                   </div>
                   <ValidationResultBadge result={v.overallResult} />
                 </div>
@@ -76,4 +85,10 @@ export default async function ValidationsPage() {
       </SectionCard>
     </div>
   );
+}
+
+function criteriaSummary(snapshot: unknown): string {
+  if (!Array.isArray(snapshot) || snapshot.length === 0) return "";
+  const passed = snapshot.filter((c: { status?: string }) => c.status === "PASSED").length;
+  return ` · ${passed}/${snapshot.length} critérios passaram`;
 }

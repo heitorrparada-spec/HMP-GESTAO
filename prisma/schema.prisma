@@ -354,6 +354,8 @@ model ValidationRecord {
   overallResult ValidationResult @default(PENDING)
   notes         String?
   issuesFound   String?
+  // [{ description, status }] desta tentativa — AcceptanceCriteria.status só guarda o estado atual.
+  criteriaSnapshot Json?
 
   validatedById String?
   validatedBy   Person?   @relation("ValidationValidatedBy", fields: [validatedById], references: [id])

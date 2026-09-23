@@ -24,7 +24,7 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
       reviewer: true,
       parentTask: true,
       subtasks: true,
-      decision: true,
+      decision: { include: { meeting: true, product: true } },
       meeting: true,
       dependsOn: { include: { dependsOnTask: true } },
       blocks: { include: { task: true } },
@@ -37,6 +37,10 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
     where: { entityType: "task", entityId: task.id },
     orderBy: { createdAt: "desc" },
   });
+
+  // Task nascida de decisão não guarda meetingId: a reunião vem pela decisão. meetingId é só para follow-up direto.
+  const originMeeting = task.decision?.meeting ?? task.meeting ?? null;
+  const product = task.feature?.product ?? task.decision?.product ?? null;
 
   return (
     <div>
@@ -53,9 +57,46 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
         ]}
       />
 
-      <div className="mb-5 flex flex-wrap items-center gap-2.5">
-        <h1 className="text-xl font-semibold text-ink">{task.title}</h1>
-        <PriorityBadge priority={task.priority} />
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-2.5">
+        <div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-xl font-semibold text-ink">{task.title}</h1>
+            <PriorityBadge priority={task.priority} />
+          </div>
+          {task.decision ? (
+            <p className="mt-1 text-sm text-ink-muted">
+              Criada a partir da decisão{" "}
+              <Link href={`/decisions/${task.decision.id}`} className="font-medium text-ink hover:underline">
+                {task.decision.title}
+              </Link>
+              {originMeeting && (
+                <>
+                  , registrada na reunião{" "}
+                  <Link href={`/meetings/${originMeeting.id}`} className="font-medium text-ink hover:underline">
+                    {originMeeting.title}
+                  </Link>
+                </>
+              )}
+              .
+            </p>
+          ) : (
+            originMeeting && (
+              <p className="mt-1 text-sm text-ink-muted">
+                Follow-up da reunião{" "}
+                <Link href={`/meetings/${originMeeting.id}`} className="font-medium text-ink hover:underline">
+                  {originMeeting.title}
+                </Link>
+                .
+              </p>
+            )
+          )}
+        </div>
+        <Link
+          href={`/tasks/${task.id}/edit`}
+          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
+        >
+          Editar
+        </Link>
       </div>
 
       <StatusTracker
@@ -79,6 +120,23 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
               </p>
             )}
           </SectionCard>
+
+          {task.feature && (task.feature.problem || task.feature.objective) && (
+            <SectionCard title="Contexto da Feature">
+              {task.feature.problem && (
+                <p className="text-sm text-ink">
+                  <span className="text-xs font-medium uppercase tracking-wide text-ink-faint">Problema: </span>
+                  {task.feature.problem}
+                </p>
+              )}
+              {task.feature.objective && (
+                <p className="mt-2 text-sm text-ink">
+                  <span className="text-xs font-medium uppercase tracking-wide text-ink-faint">Objetivo: </span>
+                  {task.feature.objective}
+                </p>
+              )}
+            </SectionCard>
+          )}
 
           {(task.dependsOn.length > 0 || task.blocks.length > 0) && (
             <SectionCard title="Dependências">
@@ -139,9 +197,35 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
         </div>
 
         <div className="space-y-6">
-          <SectionCard title="Detalhes">
+          <SectionCard title="Origem">
             <div className="space-y-3 text-sm">
-              <DetailRow label="Feature">
+              <OriginRow label="Decisão">
+                {task.decision ? (
+                  <>
+                    <EntityLink type="decision" href={`/decisions/${task.decision.id}`}>
+                      {task.decision.title}
+                    </EntityLink>
+                    <p className="mt-1 line-clamp-3 text-xs text-ink-muted">&ldquo;{task.decision.decision}&rdquo;</p>
+                  </>
+                ) : (
+                  <span className="text-ink-faint">Nenhuma — criada manualmente</span>
+                )}
+              </OriginRow>
+              <OriginRow label="Reunião">
+                {originMeeting ? (
+                  <>
+                    <EntityLink type="meeting" href={`/meetings/${originMeeting.id}`}>
+                      {originMeeting.title}
+                    </EntityLink>
+                    <p className="mt-0.5 text-xs text-ink-faint">
+                      {formatDate(originMeeting.date)} · {task.decision ? "via decisão" : "follow-up direto"}
+                    </p>
+                  </>
+                ) : (
+                  <span className="text-ink-faint">{task.decision ? "Decisão registrada fora de reunião" : "—"}</span>
+                )}
+              </OriginRow>
+              <OriginRow label="Feature">
                 {task.feature ? (
                   <EntityLink type="feature" href={`/features/${task.feature.id}`}>
                     {task.feature.title}
@@ -149,7 +233,21 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
                 ) : (
                   <span className="text-ink-faint">Task avulsa (sem Feature)</span>
                 )}
-              </DetailRow>
+              </OriginRow>
+              <OriginRow label="Product">
+                {product ? (
+                  <EntityLink type="product" href={`/products/${product.id}`}>
+                    {product.name}
+                  </EntityLink>
+                ) : (
+                  <span className="text-ink-faint">—</span>
+                )}
+              </OriginRow>
+            </div>
+          </SectionCard>
+
+          <SectionCard title="Detalhes">
+            <div className="space-y-3 text-sm">
               <DetailRow label="Responsável">
                 {task.assignee ? (
                   <PersonChip name={task.assignee.name} role={task.assignee.role} />
@@ -183,25 +281,17 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
               )}
             </div>
           </SectionCard>
-
-          {(task.decision || task.meeting) && (
-            <SectionCard title="Origem">
-              {task.decision && (
-                <EntityLink type="decision" href={`/decisions/${task.decision.id}`}>
-                  {task.decision.title}
-                </EntityLink>
-              )}
-              {task.meeting && (
-                <div className="mt-2">
-                  <EntityLink type="meeting" href={`/meetings/${task.meeting.id}`}>
-                    {task.meeting.title}
-                  </EntityLink>
-                </div>
-              )}
-            </SectionCard>
-          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function OriginRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs text-ink-faint">{label}</p>
+      <div className="mt-0.5">{children}</div>
     </div>
   );
 }
