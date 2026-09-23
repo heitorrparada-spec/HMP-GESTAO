@@ -5,6 +5,7 @@ import { Breadcrumb, EmptyState } from "@/components/ui/PageHeader";
 import { SectionCard } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { StatusTracker } from "@/components/ui/StatusTracker";
+import { NextStepHint } from "@/components/entities/NextStepHint";
 import { EntityLink } from "@/components/ui/EntityLink";
 import {
   FeatureStatusBadge,
@@ -190,7 +191,9 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
             locked={feature.status === "VALIDATION" || feature.status === "DONE"}
           />
 
-          <ValidationSection feature={feature} />
+          <div id="validation" className="scroll-mt-6">
+            <ValidationSection feature={feature} />
+          </div>
 
           <SectionCard title="Histórico">
             <ActivityFeed items={activity} />
@@ -281,56 +284,6 @@ function disabledReasonFor(
     return { disabled: true, disabledReason: 'Só é possível entrar em "Validation" a partir de "Review".' };
   }
   return {};
-}
-
-function NextStepHint({
-  feature,
-}: {
-  feature: {
-    status: FeatureStatus;
-    tasks: Array<{ status: string }>;
-    acceptanceCriteria: Array<{ status: string }>;
-  };
-}) {
-  const openTasks = feature.tasks.filter((t) => t.status !== "DONE").length;
-  const blockedTasks = feature.tasks.filter((t) => t.status === "BLOCKED").length;
-  const pendingCriteria = feature.acceptanceCriteria.filter((c) => c.status !== "PASSED").length;
-
-  const pendencies: string[] = [];
-  if (blockedTasks > 0) {
-    pendencies.push(`${blockedTasks} task${blockedTasks !== 1 ? "s" : ""} bloqueada${blockedTasks !== 1 ? "s" : ""}`);
-  }
-  if (openTasks > 0) {
-    pendencies.push(`${openTasks} task${openTasks !== 1 ? "s" : ""} aberta${openTasks !== 1 ? "s" : ""}`);
-  }
-  if (feature.acceptanceCriteria.length === 0) {
-    pendencies.push("nenhum critério de aceite cadastrado");
-  } else if (pendingCriteria > 0) {
-    pendencies.push(`${pendingCriteria}/${feature.acceptanceCriteria.length} critérios de aceite ainda não passaram`);
-  }
-  const pendencyText = pendencies.length > 0 ? pendencies.join(" · ") : null;
-
-  if (feature.status === "VALIDATION") {
-    return (
-      <p className="mt-2 text-xs font-medium text-rose-700">
-        Aguardando validação — registre o resultado na seção Validation.
-        {pendencyText && <span className="font-normal"> Pendências: {pendencyText}.</span>}
-      </p>
-    );
-  }
-  if (feature.status === "REVIEW") {
-    return (
-      <p className="mt-2 text-xs font-medium text-orange-700">
-        Em revisão — próximo passo: Validation.
-        {pendencyText && <span className="font-normal"> Pendências: {pendencyText}.</span>}
-      </p>
-    );
-  }
-  return (
-    <p className="mt-2 text-xs text-ink-faint">
-      {pendencyText ? `Pendências para concluir: ${pendencyText}.` : "Sem pendências conhecidas para concluir."}
-    </p>
-  );
 }
 
 function ResponsibilityRow({

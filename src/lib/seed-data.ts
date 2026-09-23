@@ -194,6 +194,15 @@ export async function seedDatabase(prisma: PrismaClient) {
     data: { meetingId: meeting.id },
   });
 
+  // Data relativa: a próxima reunião semanal continua no futuro sempre que o seed roda.
+  const nextMeeting = await prisma.meeting.create({
+    data: {
+      title: "Reunião HMP — Acompanhamento semanal",
+      date: daysFromNow(3, 14, 0),
+      participants: { create: [heitor, linard, pedro].map((p) => ({ personId: p.id })) },
+    },
+  });
+
   const decisionPriority = await prisma.decision.create({
     data: {
       title: "Planejamento Alimentar será tratado como Feature P0 do Nutria",
@@ -492,6 +501,14 @@ export async function seedDatabase(prisma: PrismaClient) {
       description: `Task "${taskFrontend.title}" foi bloqueada: aguardando endpoints do backend`,
       actor: pedro,
     },
+    {
+      at: new Date("2026-09-17T10:00:00"),
+      entityType: "meeting",
+      entityId: nextMeeting.id,
+      eventType: "meeting.created",
+      description: `Reunião "${nextMeeting.title}" registrada`,
+      actor: heitor,
+    },
   ];
 
   for (const log of logs) {
@@ -514,6 +531,7 @@ export async function seedDatabase(prisma: PrismaClient) {
     products: [nutria.name, exomia.name],
     feature: { title: feature.title, status: feature.status },
     tasks: tasks.length,
+    meetings: 2,
     decisions: 3,
     artifacts: 4,
     activityLog: logs.length,

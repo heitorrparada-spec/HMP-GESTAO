@@ -1,4 +1,4 @@
-import { format, formatDistanceToNow } from "date-fns";
+import { differenceInCalendarDays, format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 // Fuso local, como o formatDate ("2026-09-22" puro seria meia-noite UTC, o dia anterior em UTC-3);
@@ -58,10 +58,24 @@ export function formatRelative(value: DateInput): string {
   return formatDistanceToNow(d, { addSuffix: true, locale: ptBR });
 }
 
+// Prazo é um dia, não um instante: só atrasa quando o dia já passou (não ao meio-dia do próprio dia).
 export function isOverdue(value: DateInput): boolean {
   const d = toDate(value);
   if (!d) return false;
-  return d.getTime() < Date.now();
+  return differenceInCalendarDays(d, new Date()) < 0;
+}
+
+export function dueLabel(value: Date): string {
+  const days = differenceInCalendarDays(value, new Date());
+  if (days < -1) return `venceu há ${-days} dias`;
+  if (days === -1) return "venceu ontem";
+  if (days === 0) return "vence hoje";
+  if (days === 1) return "vence amanhã";
+  return `vence em ${days} dias`;
+}
+
+export function daysSince(value: Date): number {
+  return differenceInCalendarDays(new Date(), value);
 }
 
 export function initials(name: string): string {
