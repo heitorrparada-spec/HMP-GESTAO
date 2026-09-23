@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 import { Breadcrumb } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
+import { ActionForm } from "@/components/ui/ActionForm";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { createTask } from "../actions";
 
@@ -83,7 +84,7 @@ export default async function NewTaskPage({
       )}
 
       <Card>
-        <form action={createTask} className="space-y-4">
+        <ActionForm action={createTask} className="space-y-4">
           {decision && <input type="hidden" name="decisionId" value={decision.id} />}
 
           <Field label="Feature" required={featureRequired}>
@@ -178,7 +179,7 @@ export default async function NewTaskPage({
           <div className="pt-2">
             <SubmitButton pendingLabel="Criando…">Criar Task</SubmitButton>
           </div>
-        </form>
+        </ActionForm>
       </Card>
     </div>
   );

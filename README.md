@@ -131,6 +131,7 @@ src/lib/seed-data.ts          Dados de demonstração (fonte única, usada pelo 
 src/app/api/admin/seed/       Bootstrap do seed em produção, protegido por SEED_TOKEN
 src/app/                      Rotas (App Router) — uma pasta por entidade
 src/app/*/actions.ts          Server Actions (mutações + ActivityLog)
+src/lib/action-result.ts      ActionError: erro esperado de Server Action, mostrado no próprio form (ActionForm)
 src/components/ui/            Design system (Badge, Card, StatusTracker, ...)
 src/components/entities/      Componentes específicos de domínio (FeatureStepper)
 src/lib/                      Prisma client, labels/cores por enum, activity log, formatação

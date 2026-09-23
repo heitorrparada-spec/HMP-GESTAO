@@ -339,10 +339,11 @@ export async function seedDatabase(prisma: PrismaClient) {
       description: `Feature "${feature.title}" avançou de Backlog para Discovery`,
       actor: heitor,
     },
+    // Vincular artifact não é ação da UI (Artifacts são só leitura): estes eventos narram a demo e apontam para o artifact.
     {
       at: new Date("2026-09-02T15:00:00"),
       entityType: "artifact",
-      entityId: feature.id,
+      entityId: artifactResearch.id,
       eventType: "artifact.linked",
       description: `Artifact "${artifactResearch.title}" vinculado à Feature "${feature.title}"`,
       actor: heitor,
@@ -406,7 +407,7 @@ export async function seedDatabase(prisma: PrismaClient) {
     {
       at: new Date("2026-09-16T16:00:00"),
       entityType: "artifact",
-      entityId: feature.id,
+      entityId: artifactC4.id,
       eventType: "artifact.linked",
       description: `Artifact "${artifactC4.title}" vinculado à Feature "${feature.title}"`,
       actor: linard,
@@ -414,7 +415,7 @@ export async function seedDatabase(prisma: PrismaClient) {
     {
       at: new Date("2026-09-16T16:30:00"),
       entityType: "artifact",
-      entityId: feature.id,
+      entityId: artifactClass.id,
       eventType: "artifact.linked",
       description: `Artifact "${artifactClass.title}" vinculado à Feature "${feature.title}"`,
       actor: linard,
@@ -422,7 +423,7 @@ export async function seedDatabase(prisma: PrismaClient) {
     {
       at: new Date("2026-09-16T17:00:00"),
       entityType: "artifact",
-      entityId: feature.id,
+      entityId: artifactSpec.id,
       eventType: "artifact.linked",
       description: `Artifact "${artifactSpec.title}" vinculado à Feature "${feature.title}"`,
       actor: heitor,

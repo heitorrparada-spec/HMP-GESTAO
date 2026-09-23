@@ -1,4 +1,5 @@
 import { Card } from "@/components/ui/Card";
+import { ActionForm, type FormAction } from "@/components/ui/ActionForm";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { toDateTimeInputValue } from "@/lib/format";
 
@@ -8,7 +9,7 @@ export function MeetingForm({
   meeting,
   submitLabel,
 }: {
-  action: (formData: FormData) => Promise<void>;
+  action: FormAction;
   people: Array<{ id: string; name: string }>;
   meeting?: {
     title: string;
@@ -21,7 +22,7 @@ export function MeetingForm({
 }) {
   return (
     <Card>
-      <form action={action} className="space-y-4">
+      <ActionForm action={action} className="space-y-4">
         <div className="grid grid-cols-3 gap-4">
           <div className="col-span-2">
             <Field label="Título" required>
@@ -84,7 +85,7 @@ export function MeetingForm({
         <div className="pt-2">
           <SubmitButton>{submitLabel}</SubmitButton>
         </div>
-      </form>
+      </ActionForm>
     </Card>
   );
 }

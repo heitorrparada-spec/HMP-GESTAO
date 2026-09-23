@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Breadcrumb } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
+import { ActionForm } from "@/components/ui/ActionForm";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { updateFeature } from "../../actions";
 
@@ -30,7 +31,7 @@ export default async function EditFeaturePage({ params }: { params: Promise<{ id
       <h1 className="mb-6 text-xl font-semibold text-ink">Editar Feature</h1>
 
       <Card>
-        <form action={action} className="space-y-4">
+        <ActionForm action={action} className="space-y-4">
           <Field label="Título" required>
             <input
               name="title"
@@ -156,7 +157,7 @@ export default async function EditFeaturePage({ params }: { params: Promise<{ id
           <div className="pt-2">
             <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
           </div>
-        </form>
+        </ActionForm>
       </Card>
     </div>
   );

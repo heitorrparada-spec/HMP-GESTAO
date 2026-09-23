@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Breadcrumb } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
+import { ActionForm } from "@/components/ui/ActionForm";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/ui/ConfirmSubmitButton";
 import { taskStatusOrder, taskStatusMeta } from "@/lib/labels";
@@ -44,7 +45,7 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
       <h1 className="mb-6 text-xl font-semibold text-ink">Editar Task</h1>
 
       <Card>
-        <form action={action} className="space-y-4">
+        <ActionForm action={action} className="space-y-4">
           <Field label="Título" required>
             <input
               name="title"
@@ -145,16 +146,16 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
           <div className="flex items-center justify-between pt-2">
             <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
           </div>
-        </form>
+        </ActionForm>
 
-        <form action={removeAction} className="mt-6 border-t border-border pt-4">
+        <ActionForm action={removeAction} className="mt-6 border-t border-border pt-4">
           <ConfirmSubmitButton
             confirmMessage={`Excluir a task "${task.title}"? Essa ação não pode ser desfeita.`}
             className="text-sm font-medium text-red-600 hover:underline"
           >
             Excluir esta task
           </ConfirmSubmitButton>
-        </form>
+        </ActionForm>
       </Card>
     </div>
   );

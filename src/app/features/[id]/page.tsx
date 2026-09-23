@@ -16,6 +16,7 @@ import { PersonChip, PersonPlaceholder } from "@/components/ui/PersonChip";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/ui/ConfirmSubmitButton";
+import { ActionForm } from "@/components/ui/ActionForm";
 import { formatDate, formatDateTime, formatRelative } from "@/lib/format";
 import {
   criteriaStatusMeta,
@@ -392,7 +393,7 @@ function RequirementsSection({
             const remove = deleteRequirement.bind(null, r.id, featureId);
             return (
               <div key={r.id} className="rounded-md border border-border p-2.5">
-                <form action={save} className="space-y-2">
+                <ActionForm action={save} className="space-y-2">
                   <input
                     name="description"
                     defaultValue={r.description}
@@ -435,22 +436,26 @@ function RequirementsSection({
                       Salvar
                     </button>
                   </div>
-                </form>
-                <form action={remove} className="mt-1.5">
+                </ActionForm>
+                <ActionForm action={remove} className="mt-1.5">
                   <ConfirmSubmitButton
                     confirmMessage={`Excluir o requisito "${r.description}"?`}
                     className="text-xs text-red-600 hover:underline"
                   >
                     Excluir
                   </ConfirmSubmitButton>
-                </form>
+                </ActionForm>
               </div>
             );
           })}
         </div>
       )}
 
-      <form action={createRequirement.bind(null, featureId)} className="mt-3 space-y-2 border-t border-border pt-3">
+      <ActionForm
+        action={createRequirement.bind(null, featureId)}
+        resetOnSuccess
+        className="mt-3 space-y-2 border-t border-border pt-3"
+      >
         <input
           name="description"
           required
@@ -474,7 +479,7 @@ function RequirementsSection({
             + Adicionar
           </SubmitButton>
         </div>
-      </form>
+      </ActionForm>
     </SectionCard>
   );
 }
@@ -497,26 +502,35 @@ function AcceptanceCriteriaSection({
         />
       ) : (
         <ul className="space-y-2">
-          {criteria.map((c) => (
-            <li key={c.id} className="flex items-start justify-between gap-3 rounded-md border border-border p-2.5">
-              <span className="text-sm text-ink">{c.description}</span>
-              <div className="flex shrink-0 items-center gap-2">
-                <Badge tone={c.status === "PASSED" ? "green" : c.status === "FAILED" ? "red" : "gray"}>
-                  {c.status === "PASSED" ? "Passou" : c.status === "FAILED" ? "Falhou" : "Pendente"}
-                </Badge>
-                {!locked && (
-                  <form action={deleteAcceptanceCriteria.bind(null, c.id, featureId)}>
+          {criteria.map((c) => {
+            const row = (
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-sm text-ink">{c.description}</span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge tone={c.status === "PASSED" ? "green" : c.status === "FAILED" ? "red" : "gray"}>
+                    {c.status === "PASSED" ? "Passou" : c.status === "FAILED" ? "Falhou" : "Pendente"}
+                  </Badge>
+                  {!locked && (
                     <ConfirmSubmitButton
                       confirmMessage={`Excluir o critério "${c.description}"?`}
                       className="text-xs text-red-600 hover:underline"
                     >
                       Excluir
                     </ConfirmSubmitButton>
-                  </form>
-                )}
+                  )}
+                </div>
               </div>
-            </li>
-          ))}
+            );
+            return (
+              <li key={c.id} className="rounded-md border border-border p-2.5">
+                {locked ? (
+                  row
+                ) : (
+                  <ActionForm action={deleteAcceptanceCriteria.bind(null, c.id, featureId)}>{row}</ActionForm>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -525,8 +539,9 @@ function AcceptanceCriteriaSection({
           Critérios travados em Validation e depois de Done — são o contrato contra o qual a Feature é validada.
         </p>
       ) : (
-        <form
+        <ActionForm
           action={createAcceptanceCriteria.bind(null, featureId)}
+          resetOnSuccess
           className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3"
         >
           <input
@@ -538,7 +553,7 @@ function AcceptanceCriteriaSection({
           <SubmitButton pendingLabel="Adicionando…" className="px-3 py-1.5 text-xs">
             + Adicionar
           </SubmitButton>
-        </form>
+        </ActionForm>
       )}
     </SectionCard>
   );
@@ -570,7 +585,7 @@ function ValidationSection({ feature }: { feature: FeatureWithValidation }) {
   return (
     <SectionCard title="Validation">
       {feature.status === "VALIDATION" ? (
-        <form action={recordValidation} className="space-y-4">
+        <ActionForm action={recordValidation} className="space-y-4">
           <input type="hidden" name="featureId" value={feature.id} />
           {feature.acceptanceCriteria.length === 0 ? (
             <p className="text-sm text-amber-700">
@@ -658,7 +673,7 @@ function ValidationSection({ feature }: { feature: FeatureWithValidation }) {
             Próximo estágio: aprovar leva a Feature para <strong>Done</strong>; reprovar retorna para{" "}
             <strong>Development</strong>.
           </p>
-        </form>
+        </ActionForm>
       ) : (
         <p className="text-sm text-ink-faint">
           A Feature precisa estar em <strong>Validation</strong> para registrar um resultado. Estado atual:{" "}

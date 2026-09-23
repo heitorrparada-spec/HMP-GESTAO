@@ -1,4 +1,5 @@
 import { Card } from "@/components/ui/Card";
+import { ActionForm, type FormAction } from "@/components/ui/ActionForm";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { toDateInputValue } from "@/lib/format";
 
@@ -25,7 +26,7 @@ export function DecisionForm({
   lockedAffectsLabel,
   submitLabel,
 }: {
-  action: (formData: FormData) => Promise<void>;
+  action: FormAction;
   people: Array<{ id: string; name: string }>;
   meetings: Array<{ id: string; title: string }>;
   features: Array<{ id: string; title: string; product: { name: string } }>;
@@ -36,7 +37,7 @@ export function DecisionForm({
 }) {
   return (
     <Card>
-      <form action={action} className="space-y-4">
+      <ActionForm action={action} className="space-y-4">
         <Field label="Título" required>
           <input
             name="title"
@@ -183,7 +184,7 @@ export function DecisionForm({
         <div className="pt-2">
           <SubmitButton>{submitLabel}</SubmitButton>
         </div>
-      </form>
+      </ActionForm>
     </Card>
   );
 }

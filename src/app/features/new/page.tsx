@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { Breadcrumb } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
+import { ActionForm } from "@/components/ui/ActionForm";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { createFeature } from "../actions";
 
@@ -22,7 +23,7 @@ export default async function NewFeaturePage({
       <h1 className="mb-6 text-xl font-semibold text-ink">Criar Feature</h1>
 
       <Card>
-        <form action={createFeature} className="space-y-4">
+        <ActionForm action={createFeature} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Título" required>
               <input
@@ -149,7 +150,7 @@ export default async function NewFeaturePage({
           <div className="pt-2">
             <SubmitButton pendingLabel="Criando…">Criar Feature</SubmitButton>
           </div>
-        </form>
+        </ActionForm>
       </Card>
     </div>
   );
