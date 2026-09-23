@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { isDatabaseEmpty } from "@/lib/seed-data";
 import { getCurrentActorId } from "@/lib/actor";
 import { NavLink } from "@/components/layout/NavLink";
 import { UserSwitcher } from "@/components/layout/UserSwitcher";
@@ -27,6 +28,7 @@ export async function Sidebar() {
     }),
     getCurrentActorId(),
   ]);
+  const canLoadDemo = people.length === 0 && (await isDatabaseEmpty(prisma));
 
   return (
     // sticky + dvh: o seletor de usuário fica sempre visível. Com h-screen (100vh), no celular a base da
@@ -65,7 +67,7 @@ export async function Sidebar() {
           <Icon name="settings" className="h-4 w-4" />
           Settings
         </Link>
-        <UserSwitcher people={people} currentId={currentId} />
+        <UserSwitcher people={people} currentId={currentId} canLoadDemo={canLoadDemo} />
       </div>
     </aside>
   );

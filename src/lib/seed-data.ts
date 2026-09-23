@@ -1,4 +1,7 @@
-import type { PrismaClient } from "@/generated/prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
+
+// Aceita o client ou uma transação: o bootstrap pela UI roda o seed inteiro numa transação.
+type Db = Prisma.TransactionClient;
 
 const DEMO = "[DEMO] ";
 
@@ -9,7 +12,7 @@ function daysFromNow(days: number, hour = 9, minute = 0): Date {
   return d;
 }
 
-async function reset(prisma: PrismaClient) {
+async function reset(prisma: Db) {
   await prisma.activityLog.deleteMany();
   await prisma.taskDependency.deleteMany();
   await prisma.validationRecord.deleteMany();
@@ -28,12 +31,29 @@ async function reset(prisma: PrismaClient) {
   await prisma.company.deleteMany();
 }
 
+/** Banco sem nenhum dado — única situação em que a UI oferece carregar a demo (nada é apagado). */
+export async function isDatabaseEmpty(prisma: Db): Promise<boolean> {
+  const counts = await Promise.all([
+    prisma.company.count(),
+    prisma.person.count(),
+    prisma.product.count(),
+    prisma.release.count(),
+    prisma.feature.count(),
+    prisma.task.count(),
+    prisma.meeting.count(),
+    prisma.decision.count(),
+    prisma.artifact.count(),
+    prisma.activityLog.count(),
+  ]);
+  return counts.every((n) => n === 0);
+}
+
 /**
  * Popula o banco com os dados de demonstração da HMP.
  * Reseta tudo antes — chamável tanto pelo script de CLI (prisma/seed.ts)
  * quanto pela rota /api/admin/seed (para bootstrap sem acesso local ao banco).
  */
-export async function seedDatabase(prisma: PrismaClient) {
+export async function seedDatabase(prisma: Db) {
   await reset(prisma);
 
   const company = await prisma.company.create({ data: { name: "HMP" } });

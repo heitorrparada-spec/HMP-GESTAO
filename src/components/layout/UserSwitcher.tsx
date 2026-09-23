@@ -3,6 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useOptimistic, useState, useTransition } from "react";
 import { Avatar } from "@/components/ui/PersonChip";
+import { ActionForm } from "@/components/ui/ActionForm";
+import { SubmitButton } from "@/components/ui/SubmitButton";
+import { loadDemoData } from "@/components/layout/actions";
 import { roleMeta } from "@/lib/labels";
 import { ACTOR_COOKIE } from "@/lib/actor-cookie";
 import type { Person, RoleName } from "@/generated/prisma/client";
@@ -10,9 +13,11 @@ import type { Person, RoleName } from "@/generated/prisma/client";
 export function UserSwitcher({
   people,
   currentId,
+  canLoadDemo,
 }: {
   people: Pick<Person, "id" | "name" | "role">[];
   currentId: string | null;
+  canLoadDemo: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -58,9 +63,19 @@ export function UserSwitcher({
           <p className="px-2 py-1.5 text-xs font-medium uppercase tracking-wide text-ink-faint">
             Atuando como
           </p>
-          {people.length === 0 && (
-            <p className="px-2 pb-1.5 text-sm text-ink-muted">Nenhuma pessoa cadastrada — rode o seed (ver README).</p>
-          )}
+          {people.length === 0 &&
+            (canLoadDemo ? (
+              <ActionForm action={loadDemoData} className="px-2 pb-2">
+                <p className="mb-2 text-sm text-ink-muted">
+                  O banco está vazio. Carregue os dados de demonstração da HMP (time, Nutria, Exomia, Features…).
+                </p>
+                <SubmitButton pendingLabel="Carregando…" className="w-full">
+                  Carregar dados de demonstração
+                </SubmitButton>
+              </ActionForm>
+            ) : (
+              <p className="px-2 pb-1.5 text-sm text-ink-muted">Nenhuma pessoa cadastrada — rode o seed (ver README).</p>
+            ))}
           {people.map((person) => (
             <button
               key={person.id}

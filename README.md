@@ -88,6 +88,7 @@ Roda `prisma migrate deploy` automaticamente antes do `next build` (o mesmo coma
 4. Depois do deploy, popule os dados de demonstração visitando uma vez, no navegador:
    `https://<seu-projeto>.vercel.app/api/admin/seed?token=<o mesmo valor de SEED_TOKEN>`
    Isso roda o mesmo seed de `npm run db:seed`, direto no banco de produção. Pode chamar de novo a qualquer momento para resetar a demo ao estado inicial.
+   Alternativa sem token: com o banco **totalmente vazio**, o menu **Selecionar usuário** (canto inferior esquerdo) mostra o botão **Carregar dados de demonstração**, que roda o mesmo seed numa transação. Ele só aparece e só funciona com o banco vazio — nunca apaga dados; para resetar uma demo já populada, use a rota acima.
 5. **Depois de usar**, remova a variável `SEED_TOKEN` da Vercel (ou troque o valor) — essa rota apaga e recria todos os dados sempre que é chamada, então não é algo para deixar disponível indefinidamente com um token previsível.
 
 > Validado de ponta a ponta na Vercel com um banco Neon real (build → `migrate deploy` → seed → app funcionando). Dois problemas apareceram só durante esse primeiro deploy real, específicos da conta/projeto do usuário (não do código): o projeto tinha sido criado com Framework Preset "Other" (antes de existir código Next.js para detectar), e o Neon exige a connection string direta — não a pooled — para o advisory lock do Migrate. Os dois pontos acima já refletem a correção.
