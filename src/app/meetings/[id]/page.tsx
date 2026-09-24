@@ -9,9 +9,17 @@ import { TaskStatusBadge } from "@/components/ui/StatusBadges";
 import { PersonChip, PersonPlaceholder } from "@/components/ui/PersonChip";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { formatDateTime } from "@/lib/format";
+import { getHistory, historyLimit, HISTORY_PAGE_SIZE } from "@/lib/history/queries";
 
-export default async function MeetingPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function MeetingPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ historico?: string }>;
+}) {
   const { id } = await params;
+  const limit = historyLimit((await searchParams).historico);
 
   const meeting = await prisma.meeting.findUnique({
     where: { id },
@@ -34,17 +42,8 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
     orderBy: { createdAt: "asc" },
   });
 
-  const activity = await prisma.activityLog.findMany({
-    where: {
-      OR: [
-        { entityType: "meeting", entityId: meeting.id },
-        { entityType: "decision", entityId: { in: meeting.decisions.map((d) => d.id) } },
-        { entityType: "task", entityId: { in: tasks.map((t) => t.id) } },
-      ],
-    },
-    orderBy: { createdAt: "desc" },
-    take: 30,
-  });
+  // Histórico por escopo: a reunião, as decisões dela e as tasks decorrentes (inclusive arquivadas).
+  const history = await getHistory({ meetingId: meeting.id }, limit);
 
   return (
     <div>
@@ -137,7 +136,10 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
           </SectionCard>
 
           <SectionCard title="Histórico">
-            <ActivityFeed items={activity} />
+            <ActivityFeed
+              items={history.items}
+              moreHref={history.hasMore ? `/meetings/${meeting.id}?historico=${limit + HISTORY_PAGE_SIZE}` : null}
+            />
           </SectionCard>
         </div>
 
@@ -154,7 +156,10 @@ export default async function MeetingPage({ params }: { params: Promise<{ id: st
                       className="flex items-start gap-1.5 text-sm font-medium text-ink hover:underline"
                     >
                       <Icon name="task" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-faint" />
-                      <span className="line-clamp-2">{t.title}</span>
+                      <span className={t.archivedAt ? "line-clamp-2 line-through decoration-ink-faint" : "line-clamp-2"}>
+                        {t.title}
+                      </span>
+                      {t.archivedAt && <span className="shrink-0 text-xs font-normal text-ink-faint">(arquivada)</span>}
                     </Link>
                     <div className="mt-1.5 flex items-center gap-2 pl-5">
                       <TaskStatusBadge status={t.status} />

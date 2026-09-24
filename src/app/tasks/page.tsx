@@ -8,10 +8,13 @@ import { formatDate, isOverdue } from "@/lib/format";
 import type { TaskStatus } from "@/generated/prisma/client";
 
 export default async function TasksPage() {
-  const tasks = await prisma.task.findMany({
-    include: { feature: true, assignee: true },
+  const all = await prisma.task.findMany({
+    include: { feature: true, assignee: true, archivedBy: { select: { name: true } } },
     orderBy: { createdAt: "asc" },
   });
+  // Arquivadas saem do quadro de trabalho, mas continuam existindo (V0.3-A).
+  const tasks = all.filter((t) => !t.archivedAt);
+  const archived = all.filter((t) => t.archivedAt);
 
   const columns = taskStatusOrder.map((status) => ({
     status,
@@ -78,6 +81,28 @@ export default async function TasksPage() {
           </div>
         ))}
       </div>
+
+      {archived.length > 0 && (
+        <details className="mt-6" data-archived-list>
+          <summary className="cursor-pointer text-xs font-medium text-ink-muted">
+            Tasks arquivadas ({archived.length}) — somente leitura, continuam no histórico
+          </summary>
+          <ul className="mt-2 space-y-1.5">
+            {archived.map((t) => (
+              <li key={t.id} className="text-sm">
+                <Link href={`/tasks/${t.id}`} className="text-ink-muted line-through decoration-ink-faint hover:underline">
+                  {t.title}
+                </Link>
+                <span className="ml-2 text-xs text-ink-faint">
+                  {t.feature ? `${t.feature.title} · ` : ""}
+                  {t.archivedBy?.name ?? "—"}
+                  {t.archiveReason ? ` — motivo: ${t.archiveReason}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }

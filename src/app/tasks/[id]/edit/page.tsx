@@ -4,10 +4,11 @@ import { Breadcrumb } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { ActionForm } from "@/components/ui/ActionForm";
 import { SubmitButton } from "@/components/ui/SubmitButton";
-import { ConfirmSubmitButton } from "@/components/ui/ConfirmSubmitButton";
+import { ReasonAction } from "@/components/ui/ReasonAction";
 import { taskStatusOrder, taskStatusMeta } from "@/lib/labels";
 import { toDateInputValue } from "@/lib/format";
-import { updateTask, deleteTask } from "../../actions";
+import { taskLocks } from "@/lib/history/policy";
+import { updateTask, archiveTask } from "../../actions";
 
 export default async function EditTaskPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -22,7 +23,7 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
     prisma.person.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     task.featureId
       ? prisma.task.findMany({
-          where: { featureId: task.featureId, id: { not: task.id } },
+          where: { featureId: task.featureId, id: { not: task.id }, archivedAt: null },
           orderBy: { title: "asc" },
         })
       : Promise.resolve([]),
@@ -30,7 +31,7 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
 
   const currentDependsOnId = task.dependsOn[0]?.dependsOnId ?? "";
   const action = updateTask.bind(null, task.id);
-  const removeAction = deleteTask.bind(null, task.id, task.featureId);
+  const locks = taskLocks(task, task.feature?.status);
 
   return (
     <div className="max-w-2xl">
@@ -45,6 +46,9 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
       <h1 className="mb-6 text-xl font-semibold text-ink">Editar Task</h1>
 
       <Card>
+        {locks.contentLocked ? (
+          <p className="text-sm text-ink-muted" data-lock-message>{locks.contentMessage}</p>
+        ) : (
         <ActionForm action={action} className="space-y-4">
           <Field label="Título" required>
             <input
@@ -147,15 +151,20 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
             <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
           </div>
         </ActionForm>
+        )}
 
-        <ActionForm action={removeAction} className="mt-6 border-t border-border pt-4">
-          <ConfirmSubmitButton
-            confirmMessage={`Excluir a task "${task.title}"? Essa ação não pode ser desfeita.`}
-            className="text-sm font-medium text-red-600 hover:underline"
-          >
-            Excluir esta task
-          </ConfirmSubmitButton>
-        </ActionForm>
+        <div className="mt-6 border-t border-border pt-4">
+          {locks.canArchive ? (
+            <ReasonAction
+              action={archiveTask.bind(null, task.id)}
+              label="Arquivar esta task"
+              reasonLabel="Por que esta task sai do trabalho? (ela continua no histórico, somente leitura)"
+              confirmLabel="Arquivar task"
+            />
+          ) : (
+            <p className="text-xs text-ink-faint">{locks.archiveBlockedMessage}</p>
+          )}
+        </div>
       </Card>
     </div>
   );

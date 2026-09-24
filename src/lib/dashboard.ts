@@ -1,6 +1,7 @@
 import { startOfDay } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { daysSince, isOverdue } from "@/lib/format";
+import { getHistory, NOT_BASELINE } from "@/lib/history/queries";
 import type { FeatureStatus, Person, Priority } from "@/generated/prisma/client";
 
 /** Uma Feature ativa sem nenhum evento no histórico há esse tanto de dias aparece como "parada". */
@@ -40,7 +41,7 @@ function urgency(t: { status: string; dueDate: Date | null }) {
 async function getPersonalQueue(actor: Person) {
   const [tasks, features, decisions] = await Promise.all([
     prisma.task.findMany({
-      where: { assigneeId: actor.id, status: { not: "DONE" } },
+      where: { assigneeId: actor.id, status: { not: "DONE" }, archivedAt: null },
       include: { feature: true },
     }),
     // Ações por papel (docs/hmp-os/conceptual-architecture-v0.1.md, §9): Product valida, Architecture co-revisa,
@@ -53,11 +54,12 @@ async function getPersonalQueue(actor: Person) {
           { status: "DEVELOPMENT", techLeadId: actor.id },
         ],
       },
-      include: { product: true, tasks: { select: { status: true } } },
+      include: { product: true, tasks: { where: { archivedAt: null }, select: { status: true } } },
       orderBy: { updatedAt: "desc" },
     }),
+    // Tasks arquivadas contam como desdobramento; decisões substituídas/revogadas não pedem mais nada.
     prisma.decision.findMany({
-      where: { authorId: actor.id, generatedTasks: { none: {} } },
+      where: { authorId: actor.id, status: "ACTIVE", generatedTasks: { none: {} } },
       orderBy: { decidedAt: "desc" },
     }),
   ]);
@@ -111,59 +113,56 @@ async function getPersonalQueue(actor: Person) {
   return { openTasks, awaiting };
 }
 
-// Última atividade = evento mais recente no histórico da Feature ou de qualquer task dela.
-async function lastActivityByFeature(features: Array<{ id: string; createdAt: Date; tasks: Array<{ id: string }> }>) {
-  const taskToFeature = new Map(features.flatMap((f) => f.tasks.map((t) => [t.id, f.id] as const)));
-  const [featureEvents, taskEvents] = await Promise.all([
-    prisma.activityLog.groupBy({
-      by: ["entityId"],
-      where: { entityType: { in: ["feature", "validation", "requirement"] }, entityId: { in: features.map((f) => f.id) } },
-      _max: { createdAt: true },
-    }),
-    prisma.activityLog.groupBy({
-      by: ["entityId"],
-      where: { entityType: "task", entityId: { in: [...taskToFeature.keys()] } },
-      _max: { createdAt: true },
-    }),
-  ]);
-
+// Última atividade = evento mais recente com escopo na Feature (ela, requisitos, critérios, validações, tasks,
+// decisões). Eventos *.baseline da migração não contam: não são trabalho.
+async function lastActivityByFeature(features: Array<{ id: string; createdAt: Date }>) {
+  const events = await prisma.activityLog.groupBy({
+    by: ["featureId"],
+    where: { AND: [{ featureId: { in: features.map((f) => f.id) } }, NOT_BASELINE] },
+    _max: { createdAt: true },
+  });
   const last = new Map(features.map((f) => [f.id, f.createdAt]));
-  const bump = (featureId: string | undefined, at: Date | null) => {
-    if (!featureId || !at) return;
-    const current = last.get(featureId);
-    if (!current || at > current) last.set(featureId, at);
-  };
-  for (const e of featureEvents) bump(e.entityId, e._max.createdAt);
-  for (const e of taskEvents) bump(taskToFeature.get(e.entityId), e._max.createdAt);
+  for (const e of events) {
+    const at = e._max.createdAt;
+    const current = e.featureId ? last.get(e.featureId) : undefined;
+    if (e.featureId && at && (!current || at > current)) last.set(e.featureId, at);
+  }
   return last;
 }
 
-async function getMeetingAgenda(lastMeeting: { id: string; date: Date; decisions: Array<{ id: string; title: string; _count: { generatedTasks: number } }> }) {
+async function getMeetingAgenda(lastMeeting: {
+  id: string;
+  date: Date;
+  decisions: Array<{ id: string; title: string; status: string; _count: { generatedTasks: number } }>;
+}) {
   const [openFollowUps, stageEvents] = await Promise.all([
     prisma.task.findMany({
-      where: { status: { not: "DONE" }, OR: [{ decision: { meetingId: lastMeeting.id } }, { meetingId: lastMeeting.id }] },
+      where: {
+        status: { not: "DONE" },
+        archivedAt: null,
+        OR: [{ decision: { meetingId: lastMeeting.id } }, { meetingId: lastMeeting.id }],
+      },
       include: { assignee: true },
       orderBy: { createdAt: "asc" },
     }),
+    // Pelo escopo da Feature: vale para eventos v2 (validation.recorded aponta para a tentativa) e legados.
     prisma.activityLog.findMany({
       where: {
         createdAt: { gte: lastMeeting.date },
-        OR: [
-          { entityType: "feature", eventType: "feature.status_changed" },
-          { entityType: "validation", eventType: { in: ["validation.approved", "validation.rejected"] } },
-        ],
+        featureId: { not: null },
+        eventType: { in: ["feature.status_changed", "validation.recorded", "validation.approved", "validation.rejected"] },
       },
-      select: { entityId: true },
+      select: { featureId: true },
     }),
   ]);
   const changedFeatures = await prisma.feature.findMany({
-    where: { id: { in: [...new Set(stageEvents.map((e) => e.entityId))] } },
+    where: { id: { in: [...new Set(stageEvents.map((e) => e.featureId!))] } },
     include: { product: true },
     orderBy: { updatedAt: "desc" },
   });
 
   return {
-    decisionsWithoutTask: lastMeeting.decisions.filter((d) => d._count.generatedTasks === 0),
+    decisionsWithoutTask: lastMeeting.decisions.filter((d) => d.status === "ACTIVE" && d._count.generatedTasks === 0),
     openFollowUps,
     changedFeatures,
   };
@@ -192,23 +191,23 @@ export async function getDashboardData(actor: Person | null) {
       include: {
         product: true,
         owner: true,
-        acceptanceCriteria: { select: { status: true } },
+        acceptanceCriteria: { where: { archivedAt: null }, select: { status: true } },
         _count: { select: { validationRecords: true } },
       },
       orderBy: { updatedAt: "desc" },
     }),
     prisma.task.findMany({
-      where: { status: "BLOCKED" },
+      where: { status: "BLOCKED", archivedAt: null },
       include: { feature: true, assignee: true },
       orderBy: { updatedAt: "desc" },
     }),
     prisma.task.findMany({
-      where: { status: { not: "DONE" }, dueDate: { lt: today } },
+      where: { status: { not: "DONE" }, archivedAt: null, dueDate: { lt: today } },
       include: { feature: true, assignee: true },
       orderBy: { dueDate: "asc" },
     }),
     prisma.decision.findMany({
-      where: { generatedTasks: { none: {} } },
+      where: { status: "ACTIVE", generatedTasks: { none: {} } },
       include: { author: true },
       orderBy: { decidedAt: "desc" },
     }),
@@ -216,12 +215,12 @@ export async function getDashboardData(actor: Person | null) {
       where: { status: { in: ACTIVE_STATUSES } },
       include: {
         product: true,
-        tasks: { select: { id: true, status: true, dueDate: true } },
-        acceptanceCriteria: { select: { status: true } },
+        tasks: { where: { archivedAt: null }, select: { id: true, status: true, dueDate: true } },
+        acceptanceCriteria: { where: { archivedAt: null }, select: { status: true } },
       },
     }),
     prisma.task.findMany({
-      where: { status: { not: "DONE" }, dueDate: { gte: today } },
+      where: { status: { not: "DONE" }, archivedAt: null, dueDate: { gte: today } },
       include: { feature: true, assignee: true },
       orderBy: { dueDate: "asc" },
       take: 8,
@@ -241,7 +240,7 @@ export async function getDashboardData(actor: Person | null) {
       take: 5,
       include: { author: true, meeting: true, _count: { select: { generatedTasks: true } } },
     }),
-    prisma.activityLog.findMany({ orderBy: { createdAt: "desc" }, take: 8 }),
+    getHistory({}, 8).then((h) => h.items),
   ]);
 
   const [lastActivity, agenda] = await Promise.all([

@@ -1,4 +1,14 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { recordEvent } from "@/lib/history/record";
+import {
+  criteriaSnapshot,
+  decisionSnapshot,
+  featureSnapshot,
+  meetingSnapshot,
+  requirementSnapshot,
+  taskSnapshot,
+} from "@/lib/history/snapshots";
+import type { Scopes } from "@/lib/history/types";
 
 // Aceita o client ou uma transação: o bootstrap pela UI roda o seed inteiro numa transação.
 type Db = Prisma.TransactionClient;
@@ -12,23 +22,13 @@ function daysFromNow(days: number, hour = 9, minute = 0): Date {
   return d;
 }
 
+// Reset de desenvolvimento/demonstração: TRUNCATE, porque o banco proíbe DELETE (histórico preservado — V0.3-A).
 async function reset(prisma: Db) {
-  await prisma.activityLog.deleteMany();
-  await prisma.taskDependency.deleteMany();
-  await prisma.validationRecord.deleteMany();
-  await prisma.acceptanceCriteria.deleteMany();
-  await prisma.artifact.deleteMany();
-  await prisma.decisionParticipant.deleteMany();
-  await prisma.decision.deleteMany();
-  await prisma.task.deleteMany();
-  await prisma.requirement.deleteMany();
-  await prisma.meetingParticipant.deleteMany();
-  await prisma.meeting.deleteMany();
-  await prisma.feature.deleteMany();
-  await prisma.release.deleteMany();
-  await prisma.product.deleteMany();
-  await prisma.person.deleteMany();
-  await prisma.company.deleteMany();
+  await prisma.$executeRawUnsafe(`
+    TRUNCATE "ActivityChange", "ActivityLog", "TaskDependency", "ValidationRecord", "AcceptanceCriteria", "Artifact",
+             "DecisionParticipant", "Decision", "Task", "Requirement", "MeetingParticipant", "Meeting", "Feature",
+             "Release", "Product", "Person", "Company"
+    RESTART IDENTITY CASCADE`);
 }
 
 /** Banco sem nenhum dado — única situação em que a UI oferece carregar a demo (nada é apagado). */
@@ -233,6 +233,8 @@ export async function seedDatabase(prisma: Db) {
       alternatives: "Manter prioridade P1 e avançar outras Features em paralelo — rejeitado por falta de capacidade de time para paralelizar.",
       authorId: heitor.id,
       decidedAt: meeting.date,
+      // Registrada logo depois da reunião: a janela de correção (24 h) já passou, então a decisão está travada.
+      createdAt: new Date(meeting.date.getTime() + 20 * 60_000),
       meetingId: meeting.id,
       featureId: feature.id,
       productId: nutria.id,
@@ -251,6 +253,7 @@ export async function seedDatabase(prisma: Db) {
       alternatives: "Integrar API externa de nutrição — adiado por custo; manter cálculo manual — rejeitado, não diferencia o produto.",
       authorId: heitor.id,
       decidedAt: meeting.date,
+      createdAt: new Date(meeting.date.getTime() + 25 * 60_000),
       meetingId: meeting.id,
       featureId: feature.id,
       productId: nutria.id,
@@ -260,7 +263,7 @@ export async function seedDatabase(prisma: Db) {
     },
   });
 
-  await prisma.decision.create({
+  const decisionExomia = await prisma.decision.create({
     data: {
       title: "Exomia entra em fase de Discovery formal a partir de outubro/2026",
       context: "A Exomia existe hoje apenas como ideia inicial da HMP, sem processo de descoberta estruturado.",
@@ -268,6 +271,7 @@ export async function seedDatabase(prisma: Db) {
       reason: "Evitar dividir o time entre dois produtos antes do Plano Alimentar (P0) ser entregue.",
       authorId: heitor.id,
       decidedAt: new Date("2026-09-05T11:00:00"),
+      createdAt: new Date("2026-09-05T11:30:00"),
       productId: exomia.id,
       participants: { create: [{ personId: heitor.id }] },
     },
@@ -304,7 +308,7 @@ export async function seedDatabase(prisma: Db) {
     { title: "Validar recurso", status: "TODO", assigneeId: heitor.id, dueDate: daysFromNow(7) },
   ];
 
-  const tasks = [];
+  const tasks: Array<{ id: string; title: string; decisionId: string | null }> = [];
   for (const t of taskData) {
     const task = await prisma.task.create({
       data: {
@@ -531,7 +535,34 @@ export async function seedDatabase(prisma: Db) {
     },
   ];
 
+  // Escopos e rótulos, para a narrativa da demo aparecer nos históricos por agregado (Feature, decisão, reunião).
+  const decisions = [decisionPriority, decisionMacros, decisionExomia];
+  const artifacts = [artifactResearch, artifactC4, artifactClass, artifactSpec];
+  function locate(entityType: string, entityId: string): { label: string | null; scopes: Scopes } {
+    const onFeature = { featureId: feature.id, productId: nutria.id };
+    if (entityType === "feature" || entityType === "requirement") {
+      return { label: entityType === "feature" ? feature.title : null, scopes: onFeature };
+    }
+    if (entityType === "artifact") {
+      const a = artifacts.find((x) => x.id === entityId);
+      const inMeeting = a && (a.id === artifactC4.id || a.id === artifactClass.id);
+      return { label: a?.title ?? null, scopes: { ...onFeature, meetingId: inMeeting ? meeting.id : null } };
+    }
+    if (entityType === "meeting") {
+      const m = [meeting, nextMeeting].find((x) => x.id === entityId);
+      return { label: m?.title ?? null, scopes: { meetingId: entityId } };
+    }
+    if (entityType === "decision") {
+      const d = decisions.find((x) => x.id === entityId)!;
+      return { label: d.title, scopes: { decisionId: d.id, featureId: d.featureId, meetingId: d.meetingId, productId: d.productId } };
+    }
+    const t = tasks.find((x) => x.id === entityId)!;
+    const d = decisions.find((x) => x.id === t.decisionId);
+    return { label: t.title, scopes: { ...onFeature, decisionId: t.decisionId, meetingId: d?.meetingId ?? null } };
+  }
+
   for (const log of logs) {
+    const { label, scopes } = locate(log.entityType, log.entityId);
     await prisma.activityLog.create({
       data: {
         entityType: log.entityType,
@@ -541,9 +572,18 @@ export async function seedDatabase(prisma: Db) {
         actorId: log.actor?.id,
         actorName: log.actor?.name,
         createdAt: log.at,
+        // Narrativa da demonstração: a UI marca estes eventos como "demonstração".
+        source: "seed",
+        entityLabel: label,
+        featureId: scopes.featureId ?? null,
+        decisionId: scopes.decisionId ?? null,
+        meetingId: scopes.meetingId ?? null,
+        productId: scopes.productId ?? null,
       },
     });
   }
+
+  await recordBaselines(prisma);
 
   const summary = {
     company: company.name,
@@ -559,4 +599,83 @@ export async function seedDatabase(prisma: Db) {
 
   console.log("Seed concluído:", summary);
   return summary;
+}
+
+/**
+ * Baseline da demonstração: um snapshot de cada entidade, âncora da reconstrução do passado (mesma
+ * convenção da migração V0.3-A). Eventos *.baseline não aparecem nos históricos da UI.
+ */
+async function recordBaselines(prisma: Db) {
+  const meta = { actorId: null, actorName: null, correlationId: null, source: "seed" as const };
+  const baseline = (entityType: Parameters<typeof recordEvent>[2]["entityType"], entityId: string, label: string, scopes: Scopes, snapshot: Parameters<typeof recordEvent>[2]["snapshot"]) =>
+    recordEvent(prisma, meta, {
+      eventType: `${entityType}.baseline`,
+      entityType,
+      entityId,
+      entityLabel: label,
+      scopes,
+      description: `Estado inicial de "${label}" na demonstração`,
+      snapshot,
+    });
+
+  const person = { select: { id: true, name: true } } as const;
+  const [people, products, features, requirements, criteria, tasks, decisions, meetings] = await Promise.all([
+    prisma.person.findMany(),
+    prisma.product.findMany(),
+    prisma.feature.findMany({ include: { owner: person, architect: person, techLead: person } }),
+    prisma.requirement.findMany({ include: { feature: { select: { productId: true } } } }),
+    prisma.acceptanceCriteria.findMany({ include: { feature: { select: { productId: true } } } }),
+    prisma.task.findMany({
+      include: {
+        assignee: person,
+        feature: { select: { productId: true } },
+        decision: { select: { meetingId: true, productId: true } },
+        dependsOn: { include: { dependsOnTask: { select: { id: true, title: true } } } },
+      },
+    }),
+    prisma.decision.findMany({
+      include: { author: person, meeting: { select: { title: true } }, participants: { include: { person } } },
+    }),
+    prisma.meeting.findMany({ include: { participants: { include: { person } } } }),
+  ]);
+
+  for (const p of people) {
+    await baseline("person", p.id, p.name, {}, { name: p.name, email: p.email, role: p.role, active: p.active });
+  }
+  for (const p of products) {
+    await baseline("product", p.id, p.name, { productId: p.id }, { name: p.name, description: p.description, status: p.status, companyId: p.companyId });
+  }
+  for (const f of features) await baseline("feature", f.id, f.title, { featureId: f.id, productId: f.productId }, featureSnapshot(f));
+  for (const r of requirements) {
+    await baseline("requirement", r.id, r.description, { featureId: r.featureId, productId: r.feature.productId }, requirementSnapshot(r));
+  }
+  for (const c of criteria) {
+    await baseline("criteria", c.id, c.description, { featureId: c.featureId, productId: c.feature.productId }, criteriaSnapshot(c));
+  }
+  for (const t of tasks) {
+    await baseline(
+      "task",
+      t.id,
+      t.title,
+      {
+        featureId: t.featureId,
+        decisionId: t.decisionId,
+        meetingId: t.meetingId ?? t.decision?.meetingId ?? null,
+        productId: t.feature?.productId ?? t.decision?.productId ?? null,
+      },
+      taskSnapshot({ ...t, dependsOn: t.dependsOn[0]?.dependsOnTask ?? null }),
+    );
+  }
+  for (const d of decisions) {
+    await baseline(
+      "decision",
+      d.id,
+      d.title,
+      { decisionId: d.id, featureId: d.featureId, meetingId: d.meetingId, productId: d.productId },
+      decisionSnapshot({ ...d, meetingTitle: d.meeting?.title, participants: d.participants.map((p) => p.person) }),
+    );
+  }
+  for (const m of meetings) {
+    await baseline("meeting", m.id, m.title, { meetingId: m.id }, meetingSnapshot({ ...m, participants: m.participants.map((p) => p.person) }));
+  }
 }

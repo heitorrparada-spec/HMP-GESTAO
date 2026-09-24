@@ -8,6 +8,7 @@ export function MeetingForm({
   people,
   meeting,
   submitLabel,
+  sensitive,
 }: {
   action: FormAction;
   people: Array<{ id: string; name: string }>;
@@ -19,6 +20,8 @@ export function MeetingForm({
     participantIds: string[];
   };
   submitLabel: string;
+  /** Reunião que já aconteceu (ou tem decisões): remarcar/mudar participantes pede motivo. */
+  sensitive?: boolean;
 }) {
   return (
     <Card>
@@ -81,6 +84,21 @@ export function MeetingForm({
             placeholder="O que foi discutido e concluído — as decisões formais são registradas à parte"
           />
         </Field>
+
+        {meeting && (
+          <Field label={sensitive ? "Motivo da alteração (obrigatório para remarcar ou mudar participantes)" : "Motivo da alteração (opcional)"}>
+            <textarea
+              name="changeReason"
+              rows={2}
+              className="w-full rounded-md border border-border px-3 py-2 text-sm"
+              placeholder={
+                sensitive
+                  ? "Esta reunião já aconteceu ou já tem decisões — a data e os participantes são registro; explique a correção"
+                  : "Fica no histórico junto com a alteração"
+              }
+            />
+          </Field>
+        )}
 
         <div className="pt-2">
           <SubmitButton>{submitLabel}</SubmitButton>

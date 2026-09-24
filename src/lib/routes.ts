@@ -25,6 +25,9 @@ export function entityHref(type: EntityType | string, id: string): string | null
       return `/artifacts/${id}`;
     case "validation":
       return `/features/${id}`;
+    case "criteria":
+    case "person":
+      return null;
     default:
       return null;
   }

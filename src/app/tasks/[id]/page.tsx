@@ -8,12 +8,22 @@ import { EntityLink } from "@/components/ui/EntityLink";
 import { PriorityBadge, TaskStatusBadge } from "@/components/ui/StatusBadges";
 import { PersonChip, PersonPlaceholder } from "@/components/ui/PersonChip";
 import { ActivityFeed } from "@/components/ActivityFeed";
-import { formatDate } from "@/lib/format";
+import { ReasonAction } from "@/components/ui/ReasonAction";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { taskStatusMeta, taskStatusOrder } from "@/lib/labels";
-import { updateTaskStatus } from "../actions";
+import { taskLocks } from "@/lib/history/policy";
+import { getHistory, historyLimit, HISTORY_PAGE_SIZE } from "@/lib/history/queries";
+import { restoreTask, updateTaskStatus } from "../actions";
 
-export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TaskPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ historico?: string }>;
+}) {
   const { id } = await params;
+  const limit = historyLimit((await searchParams).historico);
 
   const task = await prisma.task.findUnique({
     where: { id },
@@ -22,6 +32,7 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
       assignee: true,
       createdBy: true,
       reviewer: true,
+      archivedBy: { select: { name: true } },
       parentTask: true,
       subtasks: true,
       decision: { include: { meeting: true, product: true } },
@@ -33,10 +44,8 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
 
   if (!task) notFound();
 
-  const activity = await prisma.activityLog.findMany({
-    where: { entityType: "task", entityId: task.id },
-    orderBy: { createdAt: "desc" },
-  });
+  const history = await getHistory({ entityType: "task", entityId: task.id }, limit);
+  const locks = taskLocks(task, task.feature?.status);
 
   // Task nascida de decisão não guarda meetingId: a reunião vem pela decisão. meetingId é só para follow-up direto.
   const originMeeting = task.decision?.meeting ?? task.meeting ?? null;
@@ -91,22 +100,56 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
             )
           )}
         </div>
-        <Link
-          href={`/tasks/${task.id}/edit`}
-          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
-        >
-          Editar
-        </Link>
+        {(!locks.contentLocked || locks.canArchive) && (
+          <Link
+            href={`/tasks/${task.id}/edit`}
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
+          >
+            {locks.contentLocked ? "Arquivar" : "Editar"}
+          </Link>
+        )}
       </div>
 
-      <StatusTracker
-        current={task.status}
-        steps={taskStatusOrder.map((status) => ({
-          value: status,
-          label: taskStatusMeta[status].label,
-          action: updateTaskStatus.bind(null, task.id, status),
-        }))}
-      />
+      {task.archivedAt && (
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" data-archived-banner>
+          <p className="font-medium">Task arquivada — fica como estava, somente leitura.</p>
+          <p className="mt-0.5 text-xs">
+            {task.archivedBy?.name ?? "—"} · {formatDateTime(task.archivedAt)}
+            {task.archiveReason ? ` — motivo: ${task.archiveReason}` : ""}
+          </p>
+          {locks.canRestore && (
+            <ReasonAction
+              className="mt-2"
+              action={restoreTask.bind(null, task.id)}
+              label="Restaurar esta task"
+              reasonLabel="Por que esta task volta ao trabalho?"
+              confirmLabel="Restaurar task"
+              tone="primary"
+            />
+          )}
+        </div>
+      )}
+      {!task.archivedAt && locks.contentMessage && (
+        <p className="mb-3 text-xs text-ink-faint">{locks.contentMessage}</p>
+      )}
+
+      {!task.archivedAt && (
+        <StatusTracker
+          current={task.status}
+          steps={taskStatusOrder.map((status) => ({
+            value: status,
+            label: taskStatusMeta[status].label,
+            action: updateTaskStatus.bind(null, task.id, status),
+            ...(locks.canChangeStatus
+              ? {}
+              : { disabled: true, disabledReason: "A Feature está em Done — esta task concluída não reabre mais." }),
+            requiresReason:
+              locks.canChangeStatus && task.status === "DONE"
+                ? `Reabrir a task (Done → ${taskStatusMeta[status].label}) exige um motivo:`
+                : undefined,
+          }))}
+        />
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -151,7 +194,11 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
                         <EntityLink type="task" href={`/tasks/${d.dependsOnTask.id}`}>
                           {d.dependsOnTask.title}
                         </EntityLink>
-                        <TaskStatusBadge status={d.dependsOnTask.status} />
+                        {d.dependsOnTask.archivedAt ? (
+                          <span className="text-xs text-ink-faint">(arquivada — não bloqueia)</span>
+                        ) : (
+                          <TaskStatusBadge status={d.dependsOnTask.status} />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -192,7 +239,10 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
           )}
 
           <SectionCard title="Histórico">
-            <ActivityFeed items={activity} />
+            <ActivityFeed
+              items={history.items}
+              moreHref={history.hasMore ? `/tasks/${task.id}?historico=${limit + HISTORY_PAGE_SIZE}` : null}
+            />
           </SectionCard>
         </div>
 

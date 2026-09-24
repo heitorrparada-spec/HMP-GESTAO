@@ -16,35 +16,48 @@ import {
 import { PersonChip, PersonPlaceholder } from "@/components/ui/PersonChip";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { SubmitButton } from "@/components/ui/SubmitButton";
-import { ConfirmSubmitButton } from "@/components/ui/ConfirmSubmitButton";
 import { ActionForm } from "@/components/ui/ActionForm";
-import { formatDate, formatDateTime, formatRelative } from "@/lib/format";
+import { ReasonAction } from "@/components/ui/ReasonAction";
+import { formatDateTime, formatRelative } from "@/lib/format";
 import {
   criteriaStatusMeta,
   featureStatusMeta,
   featureStatusOrder,
   priorityMeta,
   requirementStatusMeta,
+  taskStatusMeta,
 } from "@/lib/labels";
+import { featureLockMessage, featureLocks, isRegression } from "@/lib/history/policy";
+import { getHistory, historyLimit, HISTORY_PAGE_SIZE } from "@/lib/history/queries";
 import {
   updateFeatureStatus,
   recordValidation,
   createRequirement,
   updateRequirement,
-  deleteRequirement,
+  archiveRequirement,
+  restoreRequirement,
   createAcceptanceCriteria,
-  deleteAcceptanceCriteria,
+  archiveAcceptanceCriteria,
+  restoreAcceptanceCriteria,
 } from "../actions";
 import type {
   CriteriaStatus,
   FeatureStatus,
   Priority,
   RequirementStatus,
+  TaskStatus,
   ValidationResult,
 } from "@/generated/prisma/client";
 
-export default async function FeaturePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function FeaturePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ historico?: string }>;
+}) {
   const { id } = await params;
+  const limit = historyLimit((await searchParams).historico);
 
   const feature = await prisma.feature.findUnique({
     where: { id },
@@ -54,10 +67,10 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
       owner: true,
       architect: true,
       techLead: true,
-      requirements: { orderBy: { createdAt: "asc" } },
+      requirements: { include: { archivedBy: { select: { name: true } } }, orderBy: { createdAt: "asc" } },
       artifacts: { include: { author: true }, orderBy: { createdAt: "asc" } },
       tasks: { include: { assignee: true }, orderBy: { createdAt: "asc" } },
-      acceptanceCriteria: { orderBy: { createdAt: "asc" } },
+      acceptanceCriteria: { include: { archivedBy: { select: { name: true } } }, orderBy: { createdAt: "asc" } },
       validationRecords: { include: { validatedBy: true }, orderBy: { attemptNumber: "desc" } },
       decisions: { include: { author: true, meeting: true }, orderBy: { decidedAt: "desc" } },
     },
@@ -65,11 +78,17 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
 
   if (!feature) notFound();
 
-  const activity = await prisma.activityLog.findMany({
-    where: { entityType: { in: ["feature", "task", "validation"] }, entityId: { in: [feature.id, ...feature.tasks.map((t) => t.id)] } },
-    orderBy: { createdAt: "desc" },
-    take: 30,
-  });
+  // Estado atual × arquivados: arquivar não apaga, só tira do trabalho corrente (V0.3-A).
+  const requirements = feature.requirements.filter((r) => !r.archivedAt);
+  const archivedRequirements = feature.requirements.filter((r) => r.archivedAt);
+  const tasks = feature.tasks.filter((t) => !t.archivedAt);
+  const archivedTasks = feature.tasks.filter((t) => t.archivedAt);
+  const criteria = feature.acceptanceCriteria.filter((c) => !c.archivedAt);
+  const archivedCriteria = feature.acceptanceCriteria.filter((c) => c.archivedAt);
+  const locks = featureLocks(feature.status);
+
+  // Histórico completo da Feature: tudo com escopo nela (requisitos, critérios, validações, tasks, decisões).
+  const history = await getHistory({ featureId: feature.id }, limit);
 
   const references = feature.artifacts.filter((a) => a.type === "RESEARCH" || a.type === "REFERENCE");
   const architectureArtifacts = feature.artifacts.filter((a) =>
@@ -78,7 +97,7 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
   const otherArtifacts = feature.artifacts.filter(
     (a) => !references.includes(a) && !architectureArtifacts.includes(a),
   );
-  const tasksDone = feature.tasks.filter((t) => t.status === "DONE").length;
+  const tasksDone = tasks.filter((t) => t.status === "DONE").length;
 
   return (
     <div>
@@ -101,12 +120,14 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
             <p className="mt-1 text-xs text-ink-faint">Release: {feature.release.name}</p>
           )}
         </div>
-        <Link
-          href={`/features/${feature.id}/edit`}
-          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
-        >
-          Editar
-        </Link>
+        {!locks.done && (
+          <Link
+            href={`/features/${feature.id}/edit`}
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
+          >
+            Editar
+          </Link>
+        )}
       </div>
 
       <StatusTracker
@@ -116,9 +137,13 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
           label: featureStatusMeta[status].label,
           action: updateFeatureStatus.bind(null, feature.id, status),
           ...disabledReasonFor(feature.status, status),
+          requiresReason:
+            feature.status !== "DONE" && isRegression(feature.status, status)
+              ? `Voltar a Feature para ${featureStatusMeta[status].label} exige um motivo:`
+              : undefined,
         }))}
       />
-      {feature.status !== "DONE" && <NextStepHint feature={feature} />}
+      {feature.status !== "DONE" && <NextStepHint feature={{ ...feature, tasks, acceptanceCriteria: criteria }} />}
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -131,7 +156,12 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
             </dl>
           </SectionCard>
 
-          <RequirementsSection featureId={feature.id} requirements={feature.requirements} />
+          <RequirementsSection
+            featureId={feature.id}
+            requirements={requirements}
+            archived={archivedRequirements}
+            lockMessage={locks.requirements ? featureLockMessage(feature.status, "requirements") : null}
+          />
 
           <SectionCard title="Fluxo funcional & arquitetura">
             <dl className="space-y-4 text-sm">
@@ -147,26 +177,28 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
           </SectionCard>
 
           <SectionCard
-            title={`Tasks (${tasksDone}/${feature.tasks.length})`}
+            title={`Tasks (${tasksDone}/${tasks.length})`}
             action={
               <div className="flex items-center gap-3">
-                <Link
-                  href={`/tasks/new?featureId=${feature.id}`}
-                  className="text-xs font-medium text-brand hover:underline"
-                >
-                  + Nova
-                </Link>
+                {!locks.done && (
+                  <Link
+                    href={`/tasks/new?featureId=${feature.id}`}
+                    className="text-xs font-medium text-brand hover:underline"
+                  >
+                    + Nova
+                  </Link>
+                )}
                 <Link href="/tasks" className="text-xs font-medium text-brand hover:underline">
                   Ver todas
                 </Link>
               </div>
             }
           >
-            {feature.tasks.length === 0 ? (
+            {tasks.length === 0 ? (
               <EmptyState icon="task" title="Nenhuma task criada ainda" />
             ) : (
               <ul className="divide-y divide-border">
-                {feature.tasks.map((t) => (
+                {tasks.map((t) => (
                   <li key={t.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
                     <EntityLink type="task" href={`/tasks/${t.id}`}>
                       {t.title}
@@ -183,21 +215,39 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
                 ))}
               </ul>
             )}
+            {archivedTasks.length > 0 && (
+              <ArchivedList
+                label={`Tasks arquivadas (${archivedTasks.length})`}
+                items={archivedTasks.map((t) => ({
+                  id: t.id,
+                  title: t.title,
+                  href: `/tasks/${t.id}`,
+                  reason: t.archiveReason,
+                  at: t.archivedAt,
+                }))}
+              />
+            )}
           </SectionCard>
 
           <AcceptanceCriteriaSection
             featureId={feature.id}
-            criteria={feature.acceptanceCriteria}
-            locked={feature.status === "VALIDATION" || feature.status === "DONE"}
+            criteria={criteria}
+            archived={archivedCriteria}
+            lockMessage={locks.criteria ? featureLockMessage(feature.status, "criteria") : null}
           />
 
           <div id="validation" className="scroll-mt-6">
-            <ValidationSection feature={feature} />
+            <ValidationSection feature={{ ...feature, acceptanceCriteria: criteria }} />
           </div>
 
-          <SectionCard title="Histórico">
-            <ActivityFeed items={activity} />
-          </SectionCard>
+          <div id="historico" className="scroll-mt-6">
+            <SectionCard title="Histórico">
+              <ActivityFeed
+                items={history.items}
+                moreHref={history.hasMore ? `/features/${feature.id}?historico=${limit + HISTORY_PAGE_SIZE}#historico` : null}
+              />
+            </SectionCard>
+          </div>
         </div>
 
         <div className="space-y-6">
@@ -237,6 +287,9 @@ export default async function FeaturePage({ params }: { params: Promise<{ id: st
                     <EntityLink type="decision" href={`/decisions/${d.id}`}>
                       {d.title}
                     </EntityLink>
+                    {d.status !== "ACTIVE" && (
+                      <Badge tone="gray">{d.status === "SUPERSEDED" ? "Substituída" : "Revogada"}</Badge>
+                    )}
                     <p className="mt-0.5 text-xs text-ink-faint">
                       {d.author?.name ?? "—"} · {formatRelative(d.decidedAt)}
                       {d.meeting && ` · na reunião "${d.meeting.title}"`}
@@ -319,33 +372,93 @@ function ArtifactMiniList({
   );
 }
 
+function LockNote({ message }: { message: string }) {
+  return <p className="mt-3 border-t border-border pt-3 text-xs text-ink-faint">{message}</p>;
+}
+
+function ArchivedList({
+  label,
+  items,
+}: {
+  label: string;
+  items: Array<{ id: string; title: string; href?: string; reason: string | null; at: Date | null; by?: string | null; restore?: React.ReactNode }>;
+}) {
+  return (
+    <details className="mt-3 border-t border-border pt-3" data-archived-list>
+      <summary className="cursor-pointer text-xs font-medium text-ink-muted">{label}</summary>
+      <ul className="mt-2 space-y-2">
+        {items.map((item) => (
+          <li key={item.id} className="rounded-md border border-dashed border-border p-2.5 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              {item.href ? (
+                <Link href={item.href} className="text-ink-muted line-through decoration-ink-faint hover:underline">
+                  {item.title}
+                </Link>
+              ) : (
+                <span className="text-ink-muted line-through decoration-ink-faint">{item.title}</span>
+              )}
+              <Badge tone="gray">Arquivado</Badge>
+            </div>
+            <p className="mt-1 text-xs text-ink-faint">
+              {item.by ? `${item.by} · ` : ""}
+              {item.at ? formatDateTime(item.at) : ""}
+              {item.reason ? ` — motivo: ${item.reason}` : ""}
+            </p>
+            {item.restore && <div className="mt-1.5">{item.restore}</div>}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 const requirementStatusOrder: RequirementStatus[] = ["PROPOSED", "APPROVED", "IMPLEMENTED", "TESTED"];
 const priorityOrder: Priority[] = ["P0", "P1", "P2", "P3"];
+
+type RequirementRow = {
+  id: string;
+  description: string;
+  priority: Priority;
+  status: RequirementStatus;
+  source: string | null;
+  archivedAt: Date | null;
+  archiveReason: string | null;
+  archivedBy: { name: string } | null;
+};
 
 function RequirementsSection({
   featureId,
   requirements,
+  archived,
+  lockMessage,
 }: {
   featureId: string;
-  requirements: Array<{
-    id: string;
-    description: string;
-    priority: Priority;
-    status: RequirementStatus;
-    source: string | null;
-  }>;
+  requirements: RequirementRow[];
+  archived: RequirementRow[];
+  lockMessage: string | null;
 }) {
   return (
     <SectionCard title={`Requisitos (${requirements.length})`}>
       {requirements.length === 0 ? (
         <EmptyState title="Nenhum requisito registrado ainda" />
+      ) : lockMessage ? (
+        <ul className="space-y-2">
+          {requirements.map((r) => (
+            <li key={r.id} className="rounded-md border border-border p-2.5 text-sm">
+              <p className="text-ink">{r.description}</p>
+              <p className="mt-1 text-xs text-ink-faint">
+                {priorityMeta[r.priority].label} · {requirementStatusMeta[r.status].label}
+                {r.source ? ` · Fonte: ${r.source}` : ""}
+              </p>
+            </li>
+          ))}
+        </ul>
       ) : (
         <div className="space-y-2">
           {requirements.map((r) => {
             const save = updateRequirement.bind(null, r.id, featureId);
-            const remove = deleteRequirement.bind(null, r.id, featureId);
             return (
-              <div key={r.id} className="rounded-md border border-border p-2.5">
+              <div key={r.id} className="rounded-md border border-border p-2.5" data-requirement={r.id}>
                 <ActionForm action={save} className="space-y-2">
                   <input
                     name="description"
@@ -390,61 +503,95 @@ function RequirementsSection({
                     </button>
                   </div>
                 </ActionForm>
-                <ActionForm action={remove} className="mt-1.5">
-                  <ConfirmSubmitButton
-                    confirmMessage={`Excluir o requisito "${r.description}"?`}
-                    className="text-xs text-red-600 hover:underline"
-                  >
-                    Excluir
-                  </ConfirmSubmitButton>
-                </ActionForm>
+                <ReasonAction
+                  className="mt-1.5"
+                  action={archiveRequirement.bind(null, r.id, featureId)}
+                  label="Arquivar"
+                  reasonLabel="Por que este requisito sai da Feature?"
+                  confirmLabel="Arquivar requisito"
+                />
               </div>
             );
           })}
         </div>
       )}
-
-      <ActionForm
-        action={createRequirement.bind(null, featureId)}
-        resetOnSuccess
-        className="mt-3 space-y-2 border-t border-border pt-3"
-      >
-        <input
-          name="description"
-          required
-          placeholder="Descrição do novo requisito"
-          className="w-full rounded-md border border-border px-2 py-1.5 text-sm"
+      {archived.length > 0 && (
+        <ArchivedList
+          label={`Requisitos arquivados (${archived.length})`}
+          items={archived.map((r) => ({
+            id: r.id,
+            title: r.description,
+            reason: r.archiveReason,
+            at: r.archivedAt,
+            by: r.archivedBy?.name,
+            restore: lockMessage ? null : (
+              <ReasonAction
+                action={restoreRequirement.bind(null, r.id, featureId)}
+                label="Restaurar"
+                reasonLabel="Por que este requisito volta?"
+                confirmLabel="Restaurar requisito"
+                tone="primary"
+              />
+            ),
+          }))}
         />
-        <div className="flex flex-wrap items-center gap-2">
-          <select name="priority" defaultValue="P2" className="rounded-md border border-border px-2 py-1.5 text-xs">
-            {priorityOrder.map((p) => (
-              <option key={p} value={p}>
-                {priorityMeta[p].label}
-              </option>
-            ))}
-          </select>
+      )}
+      {lockMessage ? (
+        <LockNote message={lockMessage} />
+      ) : (
+        <ActionForm
+          action={createRequirement.bind(null, featureId)}
+          resetOnSuccess
+          className="mt-3 space-y-2 border-t border-border pt-3"
+        >
           <input
-            name="source"
-            placeholder="Fonte (opcional)"
-            className="w-40 rounded-md border border-border px-2 py-1.5 text-xs"
+            name="description"
+            required
+            placeholder="Descrição do novo requisito"
+            className="w-full rounded-md border border-border px-2 py-1.5 text-sm"
           />
-          <SubmitButton pendingLabel="Adicionando…" className="px-3 py-1.5 text-xs">
-            + Adicionar
-          </SubmitButton>
-        </div>
-      </ActionForm>
+          <div className="flex flex-wrap items-center gap-2">
+            <select name="priority" defaultValue="P2" className="rounded-md border border-border px-2 py-1.5 text-xs">
+              {priorityOrder.map((p) => (
+                <option key={p} value={p}>
+                  {priorityMeta[p].label}
+                </option>
+              ))}
+            </select>
+            <input
+              name="source"
+              placeholder="Fonte (opcional)"
+              className="w-40 rounded-md border border-border px-2 py-1.5 text-xs"
+            />
+            <SubmitButton pendingLabel="Adicionando…" className="px-3 py-1.5 text-xs">
+              + Adicionar
+            </SubmitButton>
+          </div>
+        </ActionForm>
+      )}
     </SectionCard>
   );
 }
 
+type CriteriaRow = {
+  id: string;
+  description: string;
+  status: CriteriaStatus;
+  archivedAt: Date | null;
+  archiveReason: string | null;
+  archivedBy: { name: string } | null;
+};
+
 function AcceptanceCriteriaSection({
   featureId,
   criteria,
-  locked,
+  archived,
+  lockMessage,
 }: {
   featureId: string;
-  criteria: Array<{ id: string; description: string; status: CriteriaStatus }>;
-  locked: boolean;
+  criteria: CriteriaRow[];
+  archived: CriteriaRow[];
+  lockMessage: string | null;
 }) {
   return (
     <SectionCard title={`Testes & critérios de aceite (${criteria.length})`}>
@@ -455,42 +602,50 @@ function AcceptanceCriteriaSection({
         />
       ) : (
         <ul className="space-y-2">
-          {criteria.map((c) => {
-            const row = (
+          {criteria.map((c) => (
+            <li key={c.id} className="rounded-md border border-border p-2.5" data-criteria={c.id}>
               <div className="flex items-start justify-between gap-3">
                 <span className="text-sm text-ink">{c.description}</span>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge tone={c.status === "PASSED" ? "green" : c.status === "FAILED" ? "red" : "gray"}>
-                    {c.status === "PASSED" ? "Passou" : c.status === "FAILED" ? "Falhou" : "Pendente"}
-                  </Badge>
-                  {!locked && (
-                    <ConfirmSubmitButton
-                      confirmMessage={`Excluir o critério "${c.description}"?`}
-                      className="text-xs text-red-600 hover:underline"
-                    >
-                      Excluir
-                    </ConfirmSubmitButton>
-                  )}
-                </div>
+                <Badge tone={c.status === "PASSED" ? "green" : c.status === "FAILED" ? "red" : "gray"}>
+                  {c.status === "PASSED" ? "Passou" : c.status === "FAILED" ? "Falhou" : "Pendente"}
+                </Badge>
               </div>
-            );
-            return (
-              <li key={c.id} className="rounded-md border border-border p-2.5">
-                {locked ? (
-                  row
-                ) : (
-                  <ActionForm action={deleteAcceptanceCriteria.bind(null, c.id, featureId)}>{row}</ActionForm>
-                )}
-              </li>
-            );
-          })}
+              {!lockMessage && (
+                <ReasonAction
+                  className="mt-1.5"
+                  action={archiveAcceptanceCriteria.bind(null, c.id, featureId)}
+                  label="Arquivar"
+                  reasonLabel="Por que este critério sai do contrato de validação?"
+                  confirmLabel="Arquivar critério"
+                />
+              )}
+            </li>
+          ))}
         </ul>
       )}
-
-      {locked ? (
-        <p className="mt-3 border-t border-border pt-3 text-xs text-ink-faint">
-          Critérios travados em Validation e depois de Done — são o contrato contra o qual a Feature é validada.
-        </p>
+      {archived.length > 0 && (
+        <ArchivedList
+          label={`Critérios arquivados (${archived.length})`}
+          items={archived.map((c) => ({
+            id: c.id,
+            title: c.description,
+            reason: c.archiveReason,
+            at: c.archivedAt,
+            by: c.archivedBy?.name,
+            restore: lockMessage ? null : (
+              <ReasonAction
+                action={restoreAcceptanceCriteria.bind(null, c.id, featureId)}
+                label="Restaurar"
+                reasonLabel="Por que este critério volta?"
+                confirmLabel="Restaurar critério"
+                tone="primary"
+              />
+            ),
+          }))}
+        />
+      )}
+      {lockMessage ? (
+        <LockNote message={lockMessage} />
       ) : (
         <ActionForm
           action={createAcceptanceCriteria.bind(null, featureId)}
@@ -520,18 +675,24 @@ type FeatureWithValidation = {
     id: string;
     attemptNumber: number;
     overallResult: ValidationResult;
+    requestedResult: ValidationResult | null;
     notes: string | null;
     issuesFound: string | null;
     criteriaSnapshot: unknown;
+    requirementsSnapshot: unknown;
+    tasksSnapshot: unknown;
     validatedAt: Date | null;
+    validatedByName: string | null;
     validatedBy: { name: string } | null;
   }>;
 };
 
-type CriteriaSnapshot = Array<{ description: string; status: CriteriaStatus }>;
+type CriteriaSnapshot = Array<{ id?: string; description: string; status: CriteriaStatus }>;
+type RequirementsSnapshot = Array<{ id: string; description: string; priority: Priority; status: RequirementStatus }>;
+type TasksSnapshot = Array<{ id: string; title: string; status: TaskStatus; assigneeName: string | null }>;
 
-function readSnapshot(value: unknown): CriteriaSnapshot {
-  return Array.isArray(value) ? (value as CriteriaSnapshot) : [];
+function readList<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
 }
 
 function ValidationSection({ feature }: { feature: FeatureWithValidation }) {
@@ -574,7 +735,6 @@ function ValidationSection({ feature }: { feature: FeatureWithValidation }) {
               ))}
             </div>
           )}
-
           <div>
             <label className="mb-1 block text-xs font-medium text-ink-faint">Observações</label>
             <textarea
@@ -595,7 +755,6 @@ function ValidationSection({ feature }: { feature: FeatureWithValidation }) {
               placeholder="Descreva o que precisa ser corrigido antes de reenviar para validação"
             />
           </div>
-
           {feature.acceptanceCriteria.length > 0 && (
             <p className="text-xs text-ink-faint">
               {feature.acceptanceCriteria.filter((c) => c.status === "PASSED").length} de{" "}
@@ -603,7 +762,6 @@ function ValidationSection({ feature }: { feature: FeatureWithValidation }) {
               poder aprovar.
             </p>
           )}
-
           <div className="flex gap-2">
             <button
               type="submit"
@@ -633,55 +791,98 @@ function ValidationSection({ feature }: { feature: FeatureWithValidation }) {
           {featureStatusMeta[feature.status].label}.
         </p>
       )}
-
       {feature.validationRecords.length > 0 && (
         <div className="mt-5 space-y-2 border-t border-border pt-4">
           <p className="text-xs font-medium uppercase tracking-wide text-ink-faint">
             Histórico de tentativas
           </p>
-          {feature.validationRecords.map((v) => (
-            <div key={v.id} className="rounded-md border border-border p-2.5 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-ink">Tentativa {v.attemptNumber}</span>
-                <ValidationResultBadge result={v.overallResult} />
+          {feature.validationRecords.map((v) => {
+            const criteria = readList<CriteriaSnapshot[number]>(v.criteriaSnapshot);
+            const requirements = readList<RequirementsSnapshot[number]>(v.requirementsSnapshot);
+            const tasks = readList<TasksSnapshot[number]>(v.tasksSnapshot);
+            const structured = v.requirementsSnapshot !== null || v.tasksSnapshot !== null;
+            return (
+              <div key={v.id} className="rounded-md border border-border p-2.5 text-sm" data-validation-attempt={v.attemptNumber}>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-ink">Tentativa {v.attemptNumber}</span>
+                  <ValidationResultBadge result={v.overallResult} />
+                </div>
+                <p className="mt-1 text-xs text-ink-faint">
+                  {v.validatedByName ?? v.validatedBy?.name ?? "—"} · {formatDateTime(v.validatedAt)}
+                  {v.requestedResult === "APPROVED" && v.overallResult === "REJECTED" && " · aprovação pedida, bloqueada pelo gate"}
+                </p>
+                {criteria.length > 0 && (
+                  <ul className="mt-1.5 space-y-0.5">
+                    {criteria.map((c, i) => (
+                      <li key={c.id ?? i} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-ink-muted">{c.description}</span>
+                        <span
+                          className={
+                            c.status === "PASSED"
+                              ? "text-emerald-700"
+                              : c.status === "FAILED"
+                                ? "text-red-600"
+                                : "text-ink-faint"
+                          }
+                        >
+                          {criteriaStatusMeta[c.status].label}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {v.notes && <p className="mt-1 text-xs text-ink-muted">{v.notes}</p>}
+                {v.issuesFound && (
+                  <p className="mt-1 text-xs text-red-600">Problemas: {v.issuesFound}</p>
+                )}
+                {structured ? (
+                  <details className="mt-1.5 text-xs" data-validation-snapshot>
+                    <summary className="cursor-pointer font-medium text-brand">
+                      {v.overallResult === "APPROVED" ? "O que foi aprovado" : "O que foi avaliado"} nesta tentativa
+                    </summary>
+                    <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <p className="mb-0.5 font-medium text-ink-faint">Requisitos em vigor ({requirements.length})</p>
+                        <ul className="space-y-0.5">
+                          {requirements.map((r) => (
+                            <li key={r.id} className="text-ink-muted">
+                              {r.description} <span className="text-ink-faint">· {requirementStatusMeta[r.status]?.label ?? r.status}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="mb-0.5 font-medium text-ink-faint">Tasks naquele momento ({tasks.length})</p>
+                        <ul className="space-y-0.5">
+                          {tasks.map((t) => (
+                            <li key={t.id} className="text-ink-muted">
+                              {t.title}{" "}
+                              <span className="text-ink-faint">
+                                · {taskStatusMeta[t.status]?.label ?? t.status}
+                                {t.assigneeName ? ` · ${t.assigneeName}` : ""}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  </details>
+                ) : (
+                  <p className="mt-1.5 text-xs text-ink-faint">
+                    Registrada antes da V0.3 — sem snapshot de requisitos e tasks.
+                  </p>
+                )}
+                <p className="mt-1.5 text-xs text-ink-faint">
+                  →{" "}
+                  {v.overallResult === "APPROVED"
+                    ? "Feature avançou para Done"
+                    : v.overallResult === "REJECTED"
+                      ? "Feature retornou para Development"
+                      : "Aguardando resultado"}
+                </p>
               </div>
-              <p className="mt-1 text-xs text-ink-faint">
-                {v.validatedBy?.name ?? "—"} · {formatDateTime(v.validatedAt)}
-              </p>
-              {readSnapshot(v.criteriaSnapshot).length > 0 && (
-                <ul className="mt-1.5 space-y-0.5">
-                  {readSnapshot(v.criteriaSnapshot).map((c, i) => (
-                    <li key={i} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="text-ink-muted">{c.description}</span>
-                      <span
-                        className={
-                          c.status === "PASSED"
-                            ? "text-emerald-700"
-                            : c.status === "FAILED"
-                              ? "text-red-600"
-                              : "text-ink-faint"
-                        }
-                      >
-                        {criteriaStatusMeta[c.status].label}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {v.notes && <p className="mt-1 text-xs text-ink-muted">{v.notes}</p>}
-              {v.issuesFound && (
-                <p className="mt-1 text-xs text-red-600">Problemas: {v.issuesFound}</p>
-              )}
-              <p className="mt-1.5 text-xs text-ink-faint">
-                →{" "}
-                {v.overallResult === "APPROVED"
-                  ? "Feature avançou para Done"
-                  : v.overallResult === "REJECTED"
-                    ? "Feature retornou para Development"
-                    : "Aguardando resultado"}
-              </p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </SectionCard>

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Breadcrumb } from "@/components/ui/PageHeader";
+import { meetingIsSensitive } from "@/lib/history/policy";
 import { MeetingForm } from "../../MeetingForm";
 import { updateMeeting } from "../../actions";
 
@@ -8,7 +9,7 @@ export default async function EditMeetingPage({ params }: { params: Promise<{ id
   const { id } = await params;
 
   const [meeting, people] = await Promise.all([
-    prisma.meeting.findUnique({ where: { id }, include: { participants: true } }),
+    prisma.meeting.findUnique({ where: { id }, include: { participants: true, _count: { select: { decisions: true } } } }),
     prisma.person.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
   ]);
   if (!meeting) notFound();
@@ -28,6 +29,7 @@ export default async function EditMeetingPage({ params }: { params: Promise<{ id
         people={people}
         meeting={{ ...meeting, participantIds: meeting.participants.map((p) => p.personId) }}
         submitLabel="Salvar alterações"
+        sensitive={meetingIsSensitive({ date: meeting.date, decisionCount: meeting._count.decisions })}
       />
     </div>
   );

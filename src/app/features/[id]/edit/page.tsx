@@ -4,6 +4,7 @@ import { Breadcrumb } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { ActionForm } from "@/components/ui/ActionForm";
 import { SubmitButton } from "@/components/ui/SubmitButton";
+import { featureLockMessage, featureLocks } from "@/lib/history/policy";
 import { updateFeature } from "../../actions";
 
 export default async function EditFeaturePage({ params }: { params: Promise<{ id: string }> }) {
@@ -17,6 +18,7 @@ export default async function EditFeaturePage({ params }: { params: Promise<{ id
   if (!feature) notFound();
 
   const action = updateFeature.bind(null, feature.id);
+  const locks = featureLocks(feature.status);
 
   return (
     <div className="max-w-2xl">
@@ -31,7 +33,26 @@ export default async function EditFeaturePage({ params }: { params: Promise<{ id
       <h1 className="mb-6 text-xl font-semibold text-ink">Editar Feature</h1>
 
       <Card>
+        {locks.done ? (
+          <p className="text-sm text-ink-muted" data-lock-message>
+            A Feature está em Done — ela fica como foi aprovada e não pode mais ser editada. O que foi aprovado está no
+            histórico de validação da Feature.
+          </p>
+        ) : (
         <ActionForm action={action} className="space-y-4">
+          {locks.narrative ? (
+            <div className="space-y-3 rounded-md border border-border bg-slate-50 p-3 text-sm" data-lock-message>
+              <p className="text-xs text-ink-muted">{featureLockMessage(feature.status, "narrative")}</p>
+              <ReadOnly label="Título" value={feature.title} />
+              <ReadOnly label="Contexto" value={feature.context} />
+              <ReadOnly label="Problema" value={feature.problem} />
+              <ReadOnly label="Necessidade do usuário" value={feature.userNeed} />
+              <ReadOnly label="Objetivo" value={feature.objective} />
+              <ReadOnly label="Fluxo funcional" value={feature.functionalFlow} />
+              <ReadOnly label="Notas de arquitetura" value={feature.architectureNotes} />
+            </div>
+          ) : (
+            <>
           <Field label="Título" required>
             <input
               name="title"
@@ -95,6 +116,9 @@ export default async function EditFeaturePage({ params }: { params: Promise<{ id
             />
           </Field>
 
+            </>
+          )}
+
           <Field label="Prioridade">
             <select
               name="priority"
@@ -154,10 +178,20 @@ export default async function EditFeaturePage({ params }: { params: Promise<{ id
             </Field>
           </div>
 
+          <Field label="Motivo da alteração (opcional)">
+            <textarea
+              name="reason"
+              rows={2}
+              placeholder="Ex.: repriorização decidida na reunião de segunda — fica no histórico junto com a mudança"
+              className="w-full rounded-md border border-border px-3 py-2 text-sm"
+            />
+          </Field>
+
           <div className="pt-2">
             <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
           </div>
         </ActionForm>
+        )}
       </Card>
     </div>
   );
@@ -178,6 +212,15 @@ function Field({
         {label} {required && <span className="text-red-500">*</span>}
       </label>
       {children}
+    </div>
+  );
+}
+
+function ReadOnly({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div>
+      <p className="text-xs font-medium uppercase tracking-wide text-ink-faint">{label}</p>
+      <p className="mt-0.5 whitespace-pre-wrap text-ink">{value || "—"}</p>
     </div>
   );
 }

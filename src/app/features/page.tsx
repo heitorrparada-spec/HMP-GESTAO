@@ -7,7 +7,7 @@ import { PersonChip, PersonPlaceholder } from "@/components/ui/PersonChip";
 
 export default async function FeaturesPage() {
   const features = await prisma.feature.findMany({
-    include: { product: true, owner: true, tasks: { select: { status: true } } },
+    include: { product: true, owner: true, tasks: { where: { archivedAt: null }, select: { status: true } } },
     orderBy: [{ product: { name: "asc" } }, { createdAt: "asc" }],
   });
 

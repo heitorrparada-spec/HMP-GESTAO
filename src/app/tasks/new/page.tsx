@@ -15,7 +15,7 @@ export default async function NewTaskPage({
   const params = await searchParams;
 
   const [features, people, decision] = await Promise.all([
-    prisma.feature.findMany({ include: { product: true }, orderBy: { title: "asc" } }),
+    prisma.feature.findMany({ where: { status: { not: "DONE" } }, include: { product: true }, orderBy: { title: "asc" } }),
     prisma.person.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     params.decisionId
       ? prisma.decision.findUnique({
@@ -34,7 +34,7 @@ export default async function NewTaskPage({
   const feature = features.find((f) => f.id === defaultFeatureId);
 
   const existingTasks = await prisma.task.findMany({
-    where: defaultFeatureId ? { featureId: defaultFeatureId } : undefined,
+    where: { archivedAt: null, ...(defaultFeatureId ? { featureId: defaultFeatureId } : {}) },
     include: { feature: true },
     orderBy: { title: "asc" },
   });
@@ -83,6 +83,14 @@ export default async function NewTaskPage({
         </div>
       )}
 
+      {decision && decision.status !== "ACTIVE" ? (
+        <Card>
+          <p className="text-sm text-ink-muted" data-lock-message>
+            Esta decisão foi {decision.status === "SUPERSEDED" ? "substituída" : "revogada"} — ela não gera mais tasks.
+            Crie a task a partir da decisão vigente.
+          </p>
+        </Card>
+      ) : (
       <Card>
         <ActionForm action={createTask} className="space-y-4">
           {decision && <input type="hidden" name="decisionId" value={decision.id} />}
@@ -181,6 +189,7 @@ export default async function NewTaskPage({
           </div>
         </ActionForm>
       </Card>
+      )}
     </div>
   );
 }
