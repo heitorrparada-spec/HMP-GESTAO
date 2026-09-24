@@ -2,7 +2,7 @@
 
 > Especificação funcional e arquitetural da primeira etapa do ciclo **V0.3 — Process Integrity**.
 >
-> - **Status:** proposta para validação. **Nenhuma linha de código foi alterada.**
+> - **Status:** aprovada — todas as recomendações da seção 13 (DV-01 a DV-23) foram aceitas — e implementada. Os critérios de aceite da seção 11 viraram a suíte `tests/acceptance/` (ver README, "Testes de aceite"). O ensaio da migração numa branch do Neon (DV-22) depende de uma ação no painel do Neon.
 > - **Base:** `d8ca35b`, depois da auditoria `audit-v0.2.md` (validada).
 > - **Objetivo:** criar a camada de memória do HMP OS. O sistema passa a distinguir **estado atual** de **histórico** e impede que alterações posteriores apaguem ou reescrevam o contexto do que aconteceu.
 > - **Leitura rápida:** 1.1 (estado atual × histórico), 12 (arquitetura proposta), 13 (decisões para validar antes de qualquer código).
