@@ -3,15 +3,25 @@ import { prisma } from "@/lib/prisma";
 import { seedDatabase } from "@/lib/seed-data";
 
 /**
- * Bootstrap de dados de demonstração, para rodar uma vez após o primeiro
- * deploy sem precisar de acesso local ao banco. Protegido por SEED_TOKEN.
+ * Reset total para os dados de demonstração (apaga e recria tudo). Protegido por SEED_TOKEN.
  *
- * Uso: GET /api/admin/seed?token=<SEED_TOKEN definido na Vercel>
+ * Uso: GET /api/admin/seed?token=<SEED_TOKEN>
  *
- * Remova esta rota (ou o SEED_TOKEN) depois do bootstrap inicial — ela
- * apaga e recria todos os dados sempre que chamada.
+ * V0.3-A: apagar tudo contradiz a auditabilidade, então em produção a rota fica desligada, a menos
+ * que ALLOW_DEMO_RESET=true esteja definido. Para um banco vazio, use o botão "Carregar dados de
+ * demonstração" (só insere, nunca apaga).
  */
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEMO_RESET !== "true") {
+    return NextResponse.json(
+      {
+        error:
+          "Reset da demonstração desativado em produção: ele apagaria o histórico. Defina ALLOW_DEMO_RESET=true só se quiser mesmo recomeçar do zero.",
+      },
+      { status: 403 },
+    );
+  }
+
   const expectedToken = process.env.SEED_TOKEN;
 
   if (!expectedToken) {

@@ -2,12 +2,26 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
-import { logActivity } from "@/lib/activity";
-import { getCurrentActor } from "@/lib/actor";
+import { command } from "@/lib/history/command";
+import { compact, fieldChange } from "@/lib/history/diff";
+import {
+  FEATURE_NARRATIVE_FIELDS,
+  featureLockMessage,
+  featureLocks,
+  isRegression,
+  optionalReason,
+  requireReason,
+} from "@/lib/history/policy";
+import { criteriaSnapshot, featureScopes, featureSnapshot, requirementSnapshot } from "@/lib/history/snapshots";
+import { changedFieldsSummary } from "@/lib/history/present";
 import { featureStatusMeta, featureStatusOrder } from "@/lib/labels";
+import { formText } from "@/lib/form";
 import { ActionError, runAction, type ActionResult } from "@/lib/action-result";
+import type { Change, Db } from "@/lib/history/types";
 import type { CriteriaStatus, FeatureStatus, Priority, RequirementStatus, ValidationResult } from "@/generated/prisma/client";
+
+const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
+const REQUIREMENT_STATUSES: RequirementStatus[] = ["PROPOSED", "APPROVED", "IMPLEMENTED", "TESTED"];
 
 function revalidateFeature(featureId: string, productId: string) {
   revalidatePath(`/features/${featureId}`);
@@ -18,47 +32,104 @@ function revalidateFeature(featureId: string, productId: string) {
   revalidatePath("/validations");
 }
 
-function readFeatureFields(formData: FormData) {
-  const title = String(formData.get("title") ?? "").trim();
-  const priorityRaw = String(formData.get("priority") ?? "");
-  return {
-    title,
-    context: String(formData.get("context") ?? "").trim() || null,
-    problem: String(formData.get("problem") ?? "").trim() || null,
-    userNeed: String(formData.get("userNeed") ?? "").trim() || null,
-    objective: String(formData.get("objective") ?? "").trim() || null,
-    functionalFlow: String(formData.get("functionalFlow") ?? "").trim() || null,
-    architectureNotes: String(formData.get("architectureNotes") ?? "").trim() || null,
-    priority: (priorityRaw || null) as Priority | null,
-    ownerId: String(formData.get("ownerId") ?? "") || null,
-    architectId: String(formData.get("architectId") ?? "") || null,
-    techLeadId: String(formData.get("techLeadId") ?? "") || null,
-  };
+const FEATURE_NOT_FOUND = "Esta Feature não foi encontrada — ela pode ter sido removida. Recarregue a página.";
+const REQUIREMENT_NOT_FOUND = "Este requisito não existe mais nesta Feature. Recarregue a página.";
+const CRITERIA_NOT_FOUND = "Este critério de aceite não existe mais nesta Feature. Recarregue a página.";
+
+const PERSON_FIELDS = ["ownerId", "architectId", "techLeadId"] as const;
+type PersonField = (typeof PERSON_FIELDS)[number];
+const PERSON_RELATION: Record<PersonField, "owner" | "architect" | "techLead"> = {
+  ownerId: "owner",
+  architectId: "architect",
+  techLeadId: "techLead",
+};
+
+async function loadFeature(tx: Db, featureId: string) {
+  const feature = await tx.feature.findUnique({
+    where: { id: featureId },
+    include: {
+      owner: { select: { id: true, name: true } },
+      architect: { select: { id: true, name: true } },
+      techLead: { select: { id: true, name: true } },
+    },
+  });
+  if (!feature) throw new ActionError(FEATURE_NOT_FOUND);
+  return feature;
 }
 
-const FEATURE_NOT_FOUND = "Esta Feature não foi encontrada — ela pode ter sido removida. Recarregue a página.";
+// Só os campos presentes no formulário: campos travados aparecem como texto, não como input.
+function readFeatureInput(formData: FormData) {
+  const text = (name: string) => (formData.has(name) ? formText(formData, name) || null : undefined);
+  const priorityRaw = formData.has("priority") ? String(formData.get("priority") ?? "") : undefined;
+  if (priorityRaw && !PRIORITIES.includes(priorityRaw as Priority)) throw new ActionError("Prioridade inválida.");
+  const input = {
+    title: text("title"),
+    context: text("context"),
+    problem: text("problem"),
+    userNeed: text("userNeed"),
+    objective: text("objective"),
+    functionalFlow: text("functionalFlow"),
+    architectureNotes: text("architectureNotes"),
+    priority: priorityRaw === undefined ? undefined : ((priorityRaw || null) as Priority | null),
+    ownerId: formData.has("ownerId") ? String(formData.get("ownerId") ?? "") || null : undefined,
+    architectId: formData.has("architectId") ? String(formData.get("architectId") ?? "") || null : undefined,
+    techLeadId: formData.has("techLeadId") ? String(formData.get("techLeadId") ?? "") || null : undefined,
+  };
+  if (formData.has("title") && !input.title) throw new ActionError("Informe o título da Feature.");
+  return input;
+}
+
+async function resolvePeople(tx: Db, ids: Array<string | null | undefined>) {
+  const wanted = [...new Set(ids.filter((id): id is string => !!id))];
+  const people = wanted.length ? await tx.person.findMany({ where: { id: { in: wanted } } }) : [];
+  if (people.length !== wanted.length) throw new ActionError("Um dos responsáveis selecionados não foi encontrado. Recarregue a página.");
+  return new Map(people.map((p) => [p.id, p]));
+}
 
 export async function createFeature(formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
     const productId = String(formData.get("productId") ?? "");
-    const fields = readFeatureFields(formData);
-
-    if (!fields.title) throw new ActionError("Informe o título da Feature.");
+    const input = readFeatureInput(formData);
+    if (!input.title) throw new ActionError("Informe o título da Feature.");
     if (!productId) throw new ActionError("Selecione o Product da Feature.");
 
-    const actor = await getCurrentActor();
+    const created = await command(async ({ tx, record }) => {
+      const product = await tx.product.findUnique({ where: { id: productId } });
+      if (!product) throw new ActionError("O Product selecionado não foi encontrado. Recarregue a página.");
+      const people = await resolvePeople(tx, [input.ownerId, input.architectId, input.techLeadId]);
 
-    const created = await prisma.feature.create({
-      data: { ...fields, title: fields.title, productId, status: "BACKLOG" },
-    });
-
-    await logActivity({
-      entityType: "feature",
-      entityId: created.id,
-      eventType: "feature.created",
-      description: `Feature "${created.title}" criada`,
-      actorId: actor?.id,
-      actorName: actor?.name,
+      const feature = await tx.feature.create({
+        data: {
+          title: input.title!,
+          context: input.context ?? null,
+          problem: input.problem ?? null,
+          userNeed: input.userNeed ?? null,
+          objective: input.objective ?? null,
+          functionalFlow: input.functionalFlow ?? null,
+          architectureNotes: input.architectureNotes ?? null,
+          priority: input.priority ?? null,
+          ownerId: input.ownerId ?? null,
+          architectId: input.architectId ?? null,
+          techLeadId: input.techLeadId ?? null,
+          productId,
+          status: "BACKLOG",
+        },
+      });
+      await record({
+        eventType: "feature.created",
+        entityType: "feature",
+        entityId: feature.id,
+        entityLabel: feature.title,
+        scopes: featureScopes(feature),
+        description: `Feature "${feature.title}" criada`,
+        snapshot: featureSnapshot({
+          ...feature,
+          owner: feature.ownerId ? people.get(feature.ownerId) : null,
+          architect: feature.architectId ? people.get(feature.architectId) : null,
+          techLead: feature.techLeadId ? people.get(feature.techLeadId) : null,
+        }),
+      });
+      return feature;
     });
 
     revalidateFeature(created.id, productId);
@@ -68,23 +139,50 @@ export async function createFeature(formData: FormData): Promise<ActionResult> {
 
 export async function updateFeature(featureId: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    const feature = await prisma.feature.findUnique({ where: { id: featureId } });
-    if (!feature) throw new ActionError(FEATURE_NOT_FOUND);
-    const fields = readFeatureFields(formData);
+    const input = readFeatureInput(formData);
 
-    if (!fields.title) throw new ActionError("Informe o título da Feature.");
+    const feature = await command(async ({ tx, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      const locks = featureLocks(feature.status);
+      const people = await resolvePeople(tx, [input.ownerId, input.architectId, input.techLeadId]);
 
-    const actor = await getCurrentActor();
+      const narrative = compact(
+        FEATURE_NARRATIVE_FIELDS.map((field) =>
+          input[field] === undefined ? null : fieldChange(field, feature[field], input[field]),
+        ),
+      );
+      const planning: Change[] = compact([
+        input.priority === undefined ? null : fieldChange("priority", feature.priority, input.priority),
+        ...PERSON_FIELDS.map((field) =>
+          input[field] === undefined
+            ? null
+            : fieldChange(field, feature[field], input[field], {
+                from: feature[PERSON_RELATION[field]]?.name,
+                to: input[field] ? people.get(input[field]!)?.name : null,
+              }),
+        ),
+      ]);
 
-    await prisma.feature.update({ where: { id: featureId }, data: fields });
+      if (narrative.length > 0 && locks.narrative) throw new ActionError(featureLockMessage(feature.status, "narrative"));
+      if (planning.length > 0 && locks.planning) throw new ActionError(featureLockMessage(feature.status, "planning"));
+      const changes = [...narrative, ...planning];
+      if (changes.length === 0) return feature;
 
-    await logActivity({
-      entityType: "feature",
-      entityId: featureId,
-      eventType: "feature.updated",
-      description: `Feature "${fields.title}" foi editada`,
-      actorId: actor?.id,
-      actorName: actor?.name,
+      await tx.feature.update({
+        where: { id: featureId },
+        data: Object.fromEntries(changes.map((c) => [c.field, c.to])),
+      });
+      await record({
+        eventType: "feature.updated",
+        entityType: "feature",
+        entityId: featureId,
+        entityLabel: input.title ?? feature.title,
+        scopes: featureScopes(feature),
+        description: `Feature "${input.title ?? feature.title}" alterada — ${changedFieldsSummary(changes)}`,
+        changes,
+        reason: optionalReason(formData.get("reason")),
+      });
+      return feature;
     });
 
     revalidateFeature(featureId, feature.productId);
@@ -107,48 +205,37 @@ function assertValidManualTransition(current: FeatureStatus, target: FeatureStat
   }
 }
 
-export async function updateFeatureStatus(featureId: string, status: FeatureStatus): Promise<ActionResult> {
+export async function updateFeatureStatus(featureId: string, status: FeatureStatus, formData?: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    const feature = await prisma.feature.findUnique({ where: { id: featureId } });
-    if (!feature) throw new ActionError(FEATURE_NOT_FOUND);
-    if (feature.status === status) return;
+    if (!featureStatusOrder.includes(status)) throw new ActionError("Status inválido para a Feature.");
 
-    assertValidManualTransition(feature.status, status);
+    const feature = await command(async ({ tx, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      if (feature.status === status) return null;
+      assertValidManualTransition(feature.status, status);
+      const regression = isRegression(feature.status, status);
+      const reason = regression ? requireReason(formData?.get("reason"), "voltar o status da Feature") : null;
 
-    const actor = await getCurrentActor();
+      // Update condicional: se o status mudou desde a leitura (ex.: aprovada em paralelo), não sobrescreve.
+      const { count } = await tx.feature.updateMany({ where: { id: featureId, status: feature.status }, data: { status } });
+      if (count === 0) {
+        throw new ActionError("O status desta Feature mudou enquanto a página estava aberta — recarregue e tente de novo.");
+      }
 
-    // Update condicional: se o status mudou desde a leitura (ex.: aprovada em paralelo), não sobrescreve.
-    const { count } = await prisma.feature.updateMany({
-      where: { id: featureId, status: feature.status },
-      data: { status },
-    });
-    if (count === 0) {
-      throw new ActionError("O status desta Feature mudou enquanto a página estava aberta — recarregue e tente de novo.");
-    }
-
-    const verb = featureStatusOrder.indexOf(status) > featureStatusOrder.indexOf(feature.status) ? "avançou" : "voltou";
-
-    await logActivity({
-      entityType: "feature",
-      entityId: featureId,
-      eventType: "feature.status_changed",
-      description: `Feature "${feature.title}" ${verb} de ${featureStatusMeta[feature.status].label} para ${featureStatusMeta[status].label}`,
-      actorId: actor?.id,
-      actorName: actor?.name,
-    });
-
-    if (status === "VALIDATION") {
-      await logActivity({
-        entityType: "validation",
+      await record({
+        eventType: "feature.status_changed",
+        entityType: "feature",
         entityId: featureId,
-        eventType: "validation.started",
-        description: `Feature "${feature.title}" entrou em Validation`,
-        actorId: actor?.id,
-        actorName: actor?.name,
+        entityLabel: feature.title,
+        scopes: featureScopes(feature),
+        description: `Feature "${feature.title}" ${regression ? "voltou" : "avançou"} de ${featureStatusMeta[feature.status].label} para ${featureStatusMeta[status].label}`,
+        reason,
+        changes: compact([fieldChange("status", feature.status, status)]),
       });
-    }
+      return feature;
+    });
 
-    revalidateFeature(featureId, feature.productId);
+    if (feature) revalidateFeature(featureId, feature.productId);
   });
 }
 
@@ -170,266 +257,355 @@ export async function recordValidation(formData: FormData): Promise<ActionResult
   return runAction(async () => {
     const featureId = String(formData.get("featureId"));
     const requestedResult = String(formData.get("overallResult"));
-    const notes = String(formData.get("notes") ?? "").trim();
-    const issuesFoundInput = String(formData.get("issuesFound") ?? "").trim();
+    const notes = formText(formData, "notes");
+    const issuesFoundInput = formText(formData, "issuesFound");
 
     if (requestedResult !== "APPROVED" && requestedResult !== "REJECTED") {
       throw new ActionError("Resultado de validação inválido — use Aprovar ou Reprovar.");
     }
 
-    const actor = await getCurrentActor();
+    const feature = await command(async ({ tx, actor, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      if (feature.status !== "VALIDATION") {
+        throw new ActionError(
+          "A Feature não está mais em Validation, então a validação não foi registrada. Recarregue a página para ver o estado atual.",
+        );
+      }
 
-    // Neon de produção pode estar frio: o timeout default (5s) de transação interativa não basta.
-    const { feature, attemptNumber, finalResult, gate } = await prisma.$transaction(
-      async (tx) => {
-        const feature = await tx.feature.findUnique({ where: { id: featureId } });
-        if (!feature) throw new ActionError(FEATURE_NOT_FOUND);
-
-        if (feature.status !== "VALIDATION") {
-          throw new ActionError(
-            "A Feature não está mais em Validation, então a validação não foi registrada. Recarregue a página para ver o estado atual.",
-          );
-        }
-
-        const criteria = await tx.acceptanceCriteria.findMany({ where: { featureId } });
-
-        for (const c of criteria) {
-          const result = formData.get(`criteria_${c.id}`);
-          if (result !== "PASSED" && result !== "FAILED") continue;
+      const criteria = await tx.acceptanceCriteria.findMany({ where: { featureId, archivedAt: null }, orderBy: { createdAt: "asc" } });
+      const before = new Map(criteria.map((c) => [c.id, c.status]));
+      for (const c of criteria) {
+        const result = formData.get(`criteria_${c.id}`);
+        if ((result === "PASSED" || result === "FAILED") && result !== c.status) {
           await tx.acceptanceCriteria.update({ where: { id: c.id }, data: { status: result as CriteriaStatus } });
         }
+      }
 
-        const finalCriteria = await tx.acceptanceCriteria.findMany({
-          where: { featureId },
+      const [finalCriteria, requirements, tasks, attempts] = await Promise.all([
+        tx.acceptanceCriteria.findMany({ where: { featureId, archivedAt: null }, orderBy: { createdAt: "asc" } }),
+        tx.requirement.findMany({ where: { featureId, archivedAt: null }, orderBy: { createdAt: "asc" } }),
+        tx.task.findMany({
+          where: { featureId, archivedAt: null },
+          include: { assignee: { select: { id: true, name: true } } },
           orderBy: { createdAt: "asc" },
-        });
-        const gate = evaluateApprovalGate(finalCriteria);
-        // Aprovar sem o gate satisfeito vira REJECTED: a tentativa fica registrada em vez de descartada.
-        const blockedApproval = requestedResult === "APPROVED" && !gate.canApprove;
-        const finalResult: ValidationResult = blockedApproval ? "REJECTED" : requestedResult;
+        }),
+        tx.validationRecord.count({ where: { featureId } }),
+      ]);
+      const gate = evaluateApprovalGate(finalCriteria);
+      // Aprovar sem o gate satisfeito vira REJECTED: a tentativa fica registrada em vez de descartada.
+      const blockedApproval = requestedResult === "APPROVED" && !gate.canApprove;
+      const finalResult: ValidationResult = blockedApproval ? "REJECTED" : requestedResult;
+      const attemptNumber = attempts + 1;
 
-        const attemptNumber = (await tx.validationRecord.count({ where: { featureId } })) + 1;
+      // "O que foi aprovado": o que estava em vigor nesta tentativa, mesmo que mude depois.
+      const validation = await tx.validationRecord.create({
+        data: {
+          featureId,
+          attemptNumber,
+          overallResult: finalResult,
+          requestedResult,
+          notes: notes || null,
+          issuesFound: blockedApproval
+            ? `Aprovação bloqueada: ${gate.reason}.${issuesFoundInput ? ` ${issuesFoundInput}` : ""}`
+            : issuesFoundInput || null,
+          criteriaSnapshot: finalCriteria.map((c) => ({ id: c.id, description: c.description, status: c.status })),
+          requirementsSnapshot: requirements.map((r) => ({
+            id: r.id,
+            description: r.description,
+            priority: r.priority,
+            status: r.status,
+            source: r.source,
+          })),
+          tasksSnapshot: tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            assigneeId: t.assigneeId,
+            assigneeName: t.assignee?.name ?? null,
+          })),
+          featureSnapshot: featureSnapshot(feature),
+          validatedById: actor.id,
+          validatedByName: actor.name,
+          validatedAt: new Date(),
+        },
+      });
 
-        await tx.validationRecord.create({
-          data: {
-            featureId,
-            attemptNumber,
-            overallResult: finalResult,
-            notes: notes || null,
-            issuesFound: blockedApproval
-              ? `Aprovação bloqueada: ${gate.reason}.${issuesFoundInput ? ` ${issuesFoundInput}` : ""}`
-              : issuesFoundInput || null,
-            criteriaSnapshot: finalCriteria.map((c) => ({ description: c.description, status: c.status })),
-            validatedById: actor?.id ?? null,
-            validatedAt: new Date(),
-          },
-        });
+      const nextStatus: FeatureStatus = finalResult === "APPROVED" ? "DONE" : "DEVELOPMENT";
+      const { count } = await tx.feature.updateMany({ where: { id: featureId, status: "VALIDATION" }, data: { status: nextStatus } });
+      if (count === 0) {
+        throw new ActionError("A Feature saiu de Validation enquanto a validação era registrada — recarregue a página.");
+      }
 
-        const nextStatus: FeatureStatus = finalResult === "APPROVED" ? "DONE" : "DEVELOPMENT";
-        const { count } = await tx.feature.updateMany({
-          where: { id: featureId, status: "VALIDATION" },
-          data: { status: nextStatus },
-        });
-        if (count === 0) {
-          throw new ActionError("A Feature saiu de Validation enquanto a validação era registrada — recarregue a página.");
-        }
-
-        return { feature, attemptNumber, finalResult, gate };
-      },
-      { maxWait: 10_000, timeout: 20_000 },
-    );
-
-    const blocked = requestedResult === "APPROVED" && finalResult === "REJECTED";
-
-    await logActivity({
-      entityType: "validation",
-      entityId: featureId,
-      eventType: "validation.completed",
-      description: `Validação da Feature "${feature.title}" (tentativa ${attemptNumber}) foi concluída`,
-      actorId: actor?.id,
-      actorName: actor?.name,
-    });
-
-    await logActivity({
-      entityType: "validation",
-      entityId: featureId,
-      eventType: finalResult === "APPROVED" ? "validation.approved" : "validation.rejected",
-      description: blocked
-        ? `Tentativa de aprovar a Feature "${feature.title}" (tentativa ${attemptNumber}) foi bloqueada: ${gate.reason}`
-        : `Validação da Feature "${feature.title}" (tentativa ${attemptNumber}) foi ${
-            finalResult === "APPROVED" ? "aprovada — Feature avançou para Done" : "reprovada — Feature retornou para Development"
-          }`,
-      actorId: actor?.id,
-      actorName: actor?.name,
+      const scopes = featureScopes(feature);
+      await record({
+        eventType: "validation.recorded",
+        entityType: "validation",
+        entityId: validation.id,
+        entityLabel: `Tentativa ${attemptNumber}`,
+        scopes,
+        description: blockedApproval
+          ? `Tentativa de aprovar a Feature "${feature.title}" (tentativa ${attemptNumber}) foi bloqueada: ${gate.reason}`
+          : `Validação da Feature "${feature.title}" (tentativa ${attemptNumber}) ${finalResult === "APPROVED" ? "aprovada" : "reprovada"}`,
+        changes: compact([
+          fieldChange("result", null, finalResult),
+          ...finalCriteria.map((c) =>
+            fieldChange(`criteria:${c.id}`, before.get(c.id) ?? null, c.status, { from: c.description, to: c.description }),
+          ),
+        ]),
+        context: { requestedResult, blockedBy: blockedApproval ? gate.reason ?? null : null },
+      });
+      await record({
+        eventType: "feature.status_changed",
+        entityType: "feature",
+        entityId: featureId,
+        entityLabel: feature.title,
+        scopes,
+        description:
+          finalResult === "APPROVED"
+            ? `Feature "${feature.title}" aprovada na validação — avançou para Done`
+            : `Feature "${feature.title}" reprovada na validação — voltou para Development`,
+        changes: compact([fieldChange("status", "VALIDATION", nextStatus)]),
+      });
+      return feature;
     });
 
     revalidateFeature(featureId, feature.productId);
   });
 }
 
-const REQUIREMENT_NOT_FOUND = "Este requisito não existe mais — ele pode ter sido removido. Recarregue a página.";
+// ---------- Requirements ----------
+
+async function loadRequirement(tx: Db, requirementId: string, featureId: string) {
+  const requirement = await tx.requirement.findUnique({ where: { id: requirementId } });
+  if (!requirement || requirement.featureId !== featureId) throw new ActionError(REQUIREMENT_NOT_FOUND);
+  return requirement;
+}
+
+function assertRequirementsEditable(status: FeatureStatus) {
+  if (featureLocks(status).requirements) throw new ActionError(featureLockMessage(status, "requirements"));
+}
+
+function revalidateFeaturePage(featureId: string) {
+  revalidatePath(`/features/${featureId}`);
+  revalidatePath("/activity");
+}
 
 export async function createRequirement(featureId: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    const description = String(formData.get("description") ?? "").trim();
+    const description = formText(formData, "description");
     if (!description) throw new ActionError("Informe a descrição do requisito.");
-
     const priority = (String(formData.get("priority") ?? "P2") || "P2") as Priority;
-    const source = String(formData.get("source") ?? "").trim() || null;
+    if (!PRIORITIES.includes(priority)) throw new ActionError("Prioridade inválida.");
+    const source = formText(formData, "source") || null;
 
-    const feature = await prisma.feature.findUnique({ where: { id: featureId } });
-    if (!feature) throw new ActionError(FEATURE_NOT_FOUND);
-    const actor = await getCurrentActor();
-
-    await prisma.requirement.create({
-      data: { featureId, description, priority, source },
+    await command(async ({ tx, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      assertRequirementsEditable(feature.status);
+      const requirement = await tx.requirement.create({ data: { featureId, description, priority, source } });
+      await record({
+        eventType: "requirement.created",
+        entityType: "requirement",
+        entityId: requirement.id,
+        entityLabel: description,
+        scopes: featureScopes(feature),
+        description: `Requisito adicionado à Feature "${feature.title}": "${description}"`,
+        snapshot: requirementSnapshot(requirement),
+      });
     });
-
-    await logActivity({
-      entityType: "requirement",
-      entityId: featureId,
-      eventType: "requirement.created",
-      description: `Requisito adicionado à Feature "${feature.title}": "${description}"`,
-      actorId: actor?.id,
-      actorName: actor?.name,
-    });
-
-    revalidatePath(`/features/${featureId}`);
-    revalidatePath("/activity");
+    revalidateFeaturePage(featureId);
   });
 }
 
-export async function updateRequirement(
-  requirementId: string,
-  featureId: string,
-  formData: FormData,
-): Promise<ActionResult> {
+export async function updateRequirement(requirementId: string, featureId: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    const description = String(formData.get("description") ?? "").trim();
+    const description = formText(formData, "description");
     if (!description) throw new ActionError("Informe a descrição do requisito.");
-
     const priority = String(formData.get("priority") ?? "P2") as Priority;
     const status = String(formData.get("status") ?? "PROPOSED") as RequirementStatus;
-    const source = String(formData.get("source") ?? "").trim() || null;
+    if (!PRIORITIES.includes(priority) || !REQUIREMENT_STATUSES.includes(status)) {
+      throw new ActionError("Prioridade ou status do requisito inválido.");
+    }
+    const source = formText(formData, "source") || null;
 
-    const [feature, requirement] = await Promise.all([
-      prisma.feature.findUnique({ where: { id: featureId } }),
-      prisma.requirement.findUnique({ where: { id: requirementId } }),
-    ]);
-    if (!feature) throw new ActionError(FEATURE_NOT_FOUND);
-    if (requirement?.featureId !== featureId) throw new ActionError(REQUIREMENT_NOT_FOUND);
-    const actor = await getCurrentActor();
+    await command(async ({ tx, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      const requirement = await loadRequirement(tx, requirementId, featureId);
+      assertRequirementsEditable(feature.status);
+      if (requirement.archivedAt) throw new ActionError("Este requisito está arquivado — restaure-o antes de editar.");
 
-    await prisma.requirement.update({
-      where: { id: requirementId },
-      data: { description, priority, status, source },
+      const changes = compact([
+        fieldChange("description", requirement.description, description),
+        fieldChange("priority", requirement.priority, priority),
+        fieldChange("status", requirement.status, status),
+        fieldChange("source", requirement.source, source),
+      ]);
+      if (changes.length === 0) return;
+
+      await tx.requirement.update({ where: { id: requirementId }, data: { description, priority, status, source } });
+      await record({
+        eventType: "requirement.updated",
+        entityType: "requirement",
+        entityId: requirementId,
+        entityLabel: description,
+        scopes: featureScopes(feature),
+        description: `Requisito "${description}" da Feature "${feature.title}" alterado — ${changedFieldsSummary(changes)}`,
+        changes,
+      });
     });
-
-    await logActivity({
-      entityType: "requirement",
-      entityId: featureId,
-      eventType: "requirement.updated",
-      description: `Requisito "${description}" da Feature "${feature.title}" foi editado`,
-      actorId: actor?.id,
-      actorName: actor?.name,
-    });
-
-    revalidatePath(`/features/${featureId}`);
-    revalidatePath("/activity");
+    revalidateFeaturePage(featureId);
   });
 }
 
-export async function deleteRequirement(requirementId: string, featureId: string): Promise<ActionResult> {
+export async function archiveRequirement(requirementId: string, featureId: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    const [feature, requirement, actor] = await Promise.all([
-      prisma.feature.findUnique({ where: { id: featureId } }),
-      prisma.requirement.findUnique({ where: { id: requirementId } }),
-      getCurrentActor(),
-    ]);
-    if (!feature) throw new ActionError(FEATURE_NOT_FOUND);
-    if (!requirement || requirement.featureId !== featureId) throw new ActionError(REQUIREMENT_NOT_FOUND);
+    await command(async ({ tx, actor, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      const requirement = await loadRequirement(tx, requirementId, featureId);
+      assertRequirementsEditable(feature.status);
+      if (requirement.archivedAt) throw new ActionError("Este requisito já está arquivado.");
+      const reason = requireReason(formData.get("reason"), "arquivar o requisito");
 
-    await prisma.requirement.delete({ where: { id: requirementId } });
-
-    await logActivity({
-      entityType: "requirement",
-      entityId: featureId,
-      eventType: "requirement.deleted",
-      description: `Requisito "${requirement.description}" removido da Feature "${feature.title}"`,
-      actorId: actor?.id,
-      actorName: actor?.name,
+      const archivedAt = new Date();
+      const archived = await tx.requirement.update({
+        where: { id: requirementId },
+        data: { archivedAt, archivedById: actor.id, archiveReason: reason },
+      });
+      await record({
+        eventType: "requirement.archived",
+        entityType: "requirement",
+        entityId: requirementId,
+        entityLabel: requirement.description,
+        scopes: featureScopes(feature),
+        description: `Requisito "${requirement.description}" arquivado na Feature "${feature.title}"`,
+        reason,
+        changes: compact([fieldChange("archivedAt", null, archivedAt)]),
+        snapshot: requirementSnapshot(archived),
+      });
     });
-
-    revalidatePath(`/features/${featureId}`);
-    revalidatePath("/activity");
+    revalidateFeaturePage(featureId);
   });
 }
+
+export async function restoreRequirement(requirementId: string, featureId: string, formData: FormData): Promise<ActionResult> {
+  return runAction(async () => {
+    await command(async ({ tx, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      const requirement = await loadRequirement(tx, requirementId, featureId);
+      assertRequirementsEditable(feature.status);
+      if (!requirement.archivedAt) throw new ActionError("Este requisito não está arquivado.");
+      const reason = requireReason(formData.get("reason"), "restaurar o requisito");
+
+      const restored = await tx.requirement.update({
+        where: { id: requirementId },
+        data: { archivedAt: null, archivedById: null, archiveReason: null },
+      });
+      await record({
+        eventType: "requirement.restored",
+        entityType: "requirement",
+        entityId: requirementId,
+        entityLabel: requirement.description,
+        scopes: featureScopes(feature),
+        description: `Requisito "${requirement.description}" restaurado na Feature "${feature.title}"`,
+        reason,
+        changes: compact([fieldChange("archivedAt", requirement.archivedAt, null)]),
+        snapshot: requirementSnapshot(restored),
+      });
+    });
+    revalidateFeaturePage(featureId);
+  });
+}
+
+// ---------- Acceptance Criteria ----------
 
 // Os critérios são o contrato da validação: mudá-los durante ou depois dela burlaria o gate.
 function assertCriteriaEditable(status: FeatureStatus) {
-  if (status === "VALIDATION") {
-    throw new ActionError(
-      "Os critérios de aceite ficam travados enquanto a Feature está em Validation. Para alterá-los, volte a Feature para Review.",
-    );
-  }
-  if (status === "DONE") {
-    throw new ActionError("A Feature já está em Done — os critérios de aceite ficam travados e não podem mais ser alterados.");
-  }
+  if (featureLocks(status).criteria) throw new ActionError(featureLockMessage(status, "criteria"));
+}
+
+async function loadCriteria(tx: Db, criteriaId: string, featureId: string) {
+  const criteria = await tx.acceptanceCriteria.findUnique({ where: { id: criteriaId } });
+  if (!criteria || criteria.featureId !== featureId) throw new ActionError(CRITERIA_NOT_FOUND);
+  return criteria;
 }
 
 export async function createAcceptanceCriteria(featureId: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    const description = String(formData.get("description") ?? "").trim();
+    const description = formText(formData, "description");
     if (!description) throw new ActionError("Informe a descrição do critério de aceite.");
 
-    const feature = await prisma.feature.findUnique({ where: { id: featureId } });
-    if (!feature) throw new ActionError(FEATURE_NOT_FOUND);
-    assertCriteriaEditable(feature.status);
-    const actor = await getCurrentActor();
-
-    await prisma.acceptanceCriteria.create({ data: { featureId, description } });
-
-    await logActivity({
-      entityType: "validation",
-      entityId: featureId,
-      eventType: "acceptance_criteria.created",
-      description: `Critério de aceite adicionado à Feature "${feature.title}": "${description}"`,
-      actorId: actor?.id,
-      actorName: actor?.name,
+    await command(async ({ tx, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      assertCriteriaEditable(feature.status);
+      const criteria = await tx.acceptanceCriteria.create({ data: { featureId, description } });
+      await record({
+        eventType: "criteria.created",
+        entityType: "criteria",
+        entityId: criteria.id,
+        entityLabel: description,
+        scopes: featureScopes(feature),
+        description: `Critério de aceite adicionado à Feature "${feature.title}": "${description}"`,
+        snapshot: criteriaSnapshot(criteria),
+      });
     });
-
-    revalidatePath(`/features/${featureId}`);
-    revalidatePath("/activity");
+    revalidateFeaturePage(featureId);
   });
 }
 
-export async function deleteAcceptanceCriteria(criteriaId: string, featureId: string): Promise<ActionResult> {
+export async function archiveAcceptanceCriteria(criteriaId: string, featureId: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    const [criteria, actor] = await Promise.all([
-      prisma.acceptanceCriteria.findUnique({ where: { id: criteriaId }, include: { feature: true } }),
-      getCurrentActor(),
-    ]);
-    if (!criteria) {
-      throw new ActionError("Este critério de aceite não existe mais — ele pode ter sido removido. Recarregue a página.");
-    }
-    if (criteria.featureId !== featureId) {
-      throw new ActionError("Critério não pertence a esta Feature.");
-    }
-    const feature = criteria.feature;
-    assertCriteriaEditable(feature.status);
+    await command(async ({ tx, actor, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      const criteria = await loadCriteria(tx, criteriaId, featureId);
+      assertCriteriaEditable(feature.status);
+      if (criteria.archivedAt) throw new ActionError("Este critério de aceite já está arquivado.");
+      const reason = requireReason(formData.get("reason"), "arquivar o critério de aceite");
 
-    await prisma.acceptanceCriteria.delete({ where: { id: criteriaId } });
-
-    await logActivity({
-      entityType: "validation",
-      entityId: featureId,
-      eventType: "acceptance_criteria.deleted",
-      description: `Critério de aceite "${criteria.description}" removido da Feature "${feature.title}"`,
-      actorId: actor?.id,
-      actorName: actor?.name,
+      const archivedAt = new Date();
+      const archived = await tx.acceptanceCriteria.update({
+        where: { id: criteriaId },
+        data: { archivedAt, archivedById: actor.id, archiveReason: reason },
+      });
+      await record({
+        eventType: "criteria.archived",
+        entityType: "criteria",
+        entityId: criteriaId,
+        entityLabel: criteria.description,
+        scopes: featureScopes(feature),
+        description: `Critério de aceite "${criteria.description}" arquivado na Feature "${feature.title}"`,
+        reason,
+        changes: compact([fieldChange("archivedAt", null, archivedAt)]),
+        snapshot: criteriaSnapshot(archived),
+      });
     });
+    revalidateFeaturePage(featureId);
+  });
+}
 
-    revalidatePath(`/features/${featureId}`);
-    revalidatePath("/activity");
+export async function restoreAcceptanceCriteria(criteriaId: string, featureId: string, formData: FormData): Promise<ActionResult> {
+  return runAction(async () => {
+    await command(async ({ tx, record }) => {
+      const feature = await loadFeature(tx, featureId);
+      const criteria = await loadCriteria(tx, criteriaId, featureId);
+      assertCriteriaEditable(feature.status);
+      if (!criteria.archivedAt) throw new ActionError("Este critério de aceite não está arquivado.");
+      const reason = requireReason(formData.get("reason"), "restaurar o critério de aceite");
+
+      const restored = await tx.acceptanceCriteria.update({
+        where: { id: criteriaId },
+        data: { archivedAt: null, archivedById: null, archiveReason: null },
+      });
+      await record({
+        eventType: "criteria.restored",
+        entityType: "criteria",
+        entityId: criteriaId,
+        entityLabel: criteria.description,
+        scopes: featureScopes(feature),
+        description: `Critério de aceite "${criteria.description}" restaurado na Feature "${feature.title}"`,
+        reason,
+        changes: compact([fieldChange("archivedAt", criteria.archivedAt, null)]),
+        snapshot: criteriaSnapshot(restored),
+      });
+    });
+    revalidateFeaturePage(featureId);
   });
 }

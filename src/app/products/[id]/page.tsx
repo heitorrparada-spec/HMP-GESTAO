@@ -14,6 +14,7 @@ import {
 import { PersonChip, PersonPlaceholder } from "@/components/ui/PersonChip";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { formatDate, formatRelative } from "@/lib/format";
+import { getHistory, historyLimit, HISTORY_PAGE_SIZE } from "@/lib/history/queries";
 
 const TABS = [
   { key: "overview", label: "Overview" },
@@ -30,16 +31,17 @@ export default async function ProductPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; historico?: string }>;
 }) {
   const { id } = await params;
-  const { tab = "overview" } = await searchParams;
+  const { tab = "overview", historico } = await searchParams;
+  const limit = historyLimit(historico);
 
   const product = await prisma.product.findUnique({
     where: { id },
     include: {
       features: {
-        include: { owner: true, architect: true, techLead: true, tasks: true },
+        include: { owner: true, architect: true, techLead: true, tasks: { where: { archivedAt: null } } },
         orderBy: { createdAt: "asc" },
       },
     },
@@ -49,9 +51,9 @@ export default async function ProductPage({
 
   const featureIds = product.features.map((f) => f.id);
 
-  const [tasks, decisions, meetings, artifacts, activity] = await Promise.all([
+  const [tasks, decisions, meetings, artifacts, history] = await Promise.all([
     prisma.task.findMany({
-      where: { featureId: { in: featureIds } },
+      where: { featureId: { in: featureIds }, archivedAt: null },
       include: { feature: true, assignee: true },
       orderBy: { createdAt: "asc" },
     }),
@@ -74,17 +76,10 @@ export default async function ProductPage({
       include: { feature: true, author: true },
       orderBy: { createdAt: "desc" },
     }),
-    prisma.activityLog.findMany({
-      where: {
-        OR: [
-          { entityType: "product", entityId: id },
-          { entityType: "feature", entityId: { in: featureIds } },
-        ],
-      },
-      orderBy: { createdAt: "desc" },
-      take: 20,
-    }),
+    // Histórico por escopo: tudo que pertence ao Product (Features, tasks, decisões, requisitos, validações).
+    getHistory({ productId: id }, limit),
   ]);
+  const activity = history.items;
 
   const tabCounts: Record<string, number> = {
     features: product.features.length,
@@ -147,7 +142,10 @@ export default async function ProductPage({
 
       {tab === "activity" && (
         <Card>
-          <ActivityFeed items={activity} />
+          <ActivityFeed
+            items={activity}
+            moreHref={history.hasMore ? `/products/${product.id}?tab=activity&historico=${limit + HISTORY_PAGE_SIZE}` : null}
+          />
         </Card>
       )}
     </div>

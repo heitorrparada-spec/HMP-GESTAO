@@ -60,7 +60,7 @@ export default async function ValidationsPage() {
                       {v.feature.product.name} — {v.feature.title}
                     </EntityLink>
                     <p className="mt-1 text-xs text-ink-faint">
-                      Tentativa {v.attemptNumber} · {v.validatedBy?.name ?? "—"} ·{" "}
+                      Tentativa {v.attemptNumber} · {v.validatedByName ?? v.validatedBy?.name ?? "—"} ·{" "}
                       {formatDateTime(v.validatedAt ?? v.createdAt)}
                       {criteriaSummary(v.criteriaSnapshot)}
                     </p>

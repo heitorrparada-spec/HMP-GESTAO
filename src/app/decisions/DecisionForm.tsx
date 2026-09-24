@@ -25,6 +25,8 @@ export function DecisionForm({
   defaults,
   lockedAffectsLabel,
   submitLabel,
+  supersede,
+  changeReason,
 }: {
   action: FormAction;
   people: Array<{ id: string; name: string }>;
@@ -34,10 +36,33 @@ export function DecisionForm({
   defaults: DecisionFormDefaults;
   lockedAffectsLabel?: string;
   submitLabel: string;
+  /** Nova decisão que substitui uma vigente (a anterior passa a "Substituída"). */
+  supersede?: { id: string; title: string };
+  /** Motivo opcional da correção, na janela de correção. */
+  changeReason?: boolean;
 }) {
   return (
     <Card>
       <ActionForm action={action} className="space-y-4">
+        {supersede && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <input type="hidden" name="supersedesId" value={supersede.id} />
+            <p>
+              Esta nova decisão vai <strong>substituir</strong> &ldquo;{supersede.title}&rdquo;, que continua visível como
+              substituída, com as tasks que gerou.
+            </p>
+            <label className="mb-1 mt-2 block text-xs font-medium">
+              Motivo da substituição <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              name="supersedeReason"
+              required
+              rows={2}
+              className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm"
+              placeholder="O que mudou para a decisão anterior deixar de valer?"
+            />
+          </div>
+        )}
         <Field label="Título" required>
           <input
             name="title"
@@ -109,6 +134,7 @@ export function DecisionForm({
             <input
               type="date"
               name="decidedAt"
+              max={toDateInputValue(new Date())}
               defaultValue={toDateInputValue(defaults.decidedAt)}
               className="w-full rounded-md border border-border px-3 py-2 text-sm"
             />
@@ -180,6 +206,17 @@ export function DecisionForm({
             )}
           </Field>
         </div>
+
+        {changeReason && (
+          <Field label="Motivo da correção (opcional)">
+            <textarea
+              name="changeReason"
+              rows={2}
+              className="w-full rounded-md border border-border px-3 py-2 text-sm"
+              placeholder="Ex.: erro de digitação, participante esquecido — fica no histórico junto com a versão anterior"
+            />
+          </Field>
+        )}
 
         <div className="pt-2">
           <SubmitButton>{submitLabel}</SubmitButton>

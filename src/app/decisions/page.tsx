@@ -38,6 +38,11 @@ export default async function DecisionsPage() {
                   <EntityLink type="decision" href={`/decisions/${d.id}`}>
                     {d.title}
                   </EntityLink>
+                  {d.status !== "ACTIVE" && (
+                    <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+                      {d.status === "SUPERSEDED" ? "Substituída" : "Revogada"}
+                    </span>
+                  )}
                   <p className="mt-1 text-xs text-ink-faint">
                     {d.author?.name ?? "—"} · {formatDate(d.decidedAt)}
                     {d.meeting && (

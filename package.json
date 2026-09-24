@@ -8,6 +8,8 @@
     "build": "prisma migrate deploy && next build",
     "start": "next start",
     "lint": "eslint .",
+    "test:acceptance": "node --test --test-concurrency=1 tests/acceptance/v0.3-a.test.mjs",
+    "test:migration": "node --test tests/acceptance/migration.test.mjs",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset --force",
